@@ -8,6 +8,9 @@ export default function NetflixTitle() {
   const router = useRouter();
 
   const handleClick = () => {
+    if (isClicked) return;
+    const audio = new Audio("/audio/netflix-intro.mp3");
+    audio.play().catch((err) => console.warn("Intro audio:", err));
     setIsClicked(true);
   };
 
