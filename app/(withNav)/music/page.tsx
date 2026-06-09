@@ -50,7 +50,7 @@ export default function MusicPage() {
         <iframe
           width="100%"
           height="380"
-          src="https://www.youtube.com/embed/videoseries?list=PLbpi6ZahtOH6Ar_3GPy3workCmIou85d1"
+          src="https://www.youtube.com/embed/videoseries?list=PL1JnANQpaEfhmORSFuLjZW_epMNL0P6qc"
           title="Music Playlist"
           frameBorder="0"
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -59,7 +59,7 @@ export default function MusicPage() {
         />
       </div>
       <p style={{ color: "#555", fontSize: "0.8rem", marginTop: "8px", marginBottom: "48px" }}>
-        YouTube Music liked playlist is private — search the artists above or connect on Spotify.
+        Best experienced with sound on.
       </p>
     </div>
   );
