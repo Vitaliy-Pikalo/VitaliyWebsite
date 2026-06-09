@@ -5,34 +5,34 @@ import CategoryHeroImage from "@/components/CategoryHeroImage";
 
 const projects = [
   {
-    title: "Sports Social Platform",
-    description: "A mobile-first platform combining competitive and recreational sports with messaging, achievements, and AI-driven highlight feeds.",
-    techUsed: "React, Node.js, MongoDB",
+    title: "Chess960-NN",
+    description:
+      "AlphaZero-style chess engine built with PyTorch ResNet + PUCT MCTS. Trained from scratch via self-play on RTX 3060 Ti. Reaches ~1600 Elo vs Stockfish.",
+    techUsed: "Python, PyTorch, MCTS",
   },
   {
-    title: "Stock Trading Algorithm",
-    description: "A data-driven trading system that scrapes sentiment and search trends to generate trading signals.",
-    techUsed: "Python, APIs, Data pipelines",
+    title: "Kalshi Trading Bot",
+    description:
+      "24/7 autonomous trading daemon on Kalshi prediction markets. 270K+ market snapshots stored in SQLite WAL. Runs live A/B experiments on trading strategies.",
+    techUsed: "Python, SQLite, REST APIs",
   },
   {
-    title: "Poker Strategy Bot",
-    description: "A simulation of my personal Texas Hold'em strategy with probability-based decision logic.",
-    techUsed: "Python, Algorithms",
-  },
-  {
-    title: "Tennis Booking App",
-    description: "A scheduling and booking platform focused on quick reservations.",
-    techUsed: "JavaScript, Full-Stack",
+    title: "Bonfire",
+    description:
+      "Multiplayer social app built with Flutter + Firebase + Groq LLM. Real-time rooms, AI-assisted conversation, deployed on iOS and Android.",
+    techUsed: "Flutter, Firebase, Groq LLM",
   },
   {
     title: "SwipeHire",
-    description: "Resume swiper for recruiters with swipe-based interface, star candidates, and email integration.",
+    description:
+      "Resume swiper for recruiters — swipe-based interface, star candidates, and email integration.",
     techUsed: "React, Tailwind",
   },
   {
     title: "FlashTrades",
-    description: "Lightweight educational day-trading simulator under 15 KB. Link: flashtrades.netlify.app",
-    techUsed: "Canvas, JavaScript",
+    description:
+      "Lightweight educational day-trading simulator under 15 KB. Custom canvas-based rendering and binary data encoding. Zero frameworks.",
+    techUsed: "JavaScript, Canvas",
   },
 ];
 

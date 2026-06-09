@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import CardImage from "@/components/CardImage";
 
@@ -62,27 +62,30 @@ const continueWatchingConfig: Record<string, { title: string; imgSrc: string; li
   ],
 };
 
-const BANNER_HEADLINE = "Vitaliy Pikalo — Software Engineer & Computer Engineering Student";
-const BANNER_SUMMARY = "Driven and competitive software engineer with a strong foundation in full-stack development, performance optimization, and data-driven systems. As a Penn State Computer Engineering student and collegiate athlete, I bring a disciplined, execution-focused mindset to building products that are both technically robust and user-centric.\n\nMy experience spans developing interactive web applications, algorithmic trading tools, and simulation platforms using technologies such as C++, Python, JavaScript, and modern web stacks. I've built projects ranging from social platforms with real-time communication features to lightweight, performance-constrained simulations like FlashTrades, a sub-15KB trading environment with custom data encoding and canvas-based rendering.\n\nI'm particularly interested in systems that combine real-time data, decision-making, and scalability — including financial technology, machine learning applications, and high-performance backend architectures. Beyond engineering, my background as a competitive tennis player shapes how I approach problem-solving: iterate quickly, measure results, and continuously improve.";
-const RESUME_LINK = "#";
+const BANNER_HEADLINE = "Vitaliy Pikalo — Penn State CompE · Dec 2027 · Builder · AMCC Tennis Champion";
+const BANNER_SUMMARY = "I build high-performance software — ML systems, autonomous trading bots, and full-stack products that ship. Currently studying Computer Engineering at Penn State University Park (graduating Dec 2027).\n\nRecent work: Chess960-NN (AlphaZero-style engine, ~1600 Elo vs Stockfish), Kalshi Trading Bot (24/7 daemon, 270K+ market snapshots, live A/B experiments), and Bonfire (Flutter + Firebase + Groq LLM, multiplayer).\n\nExperience: Full-Stack Team Lead (10+ shipped apps, Stripe/Supabase/Firebase), Equity Analyst ($1.6M student fund), AI Teaching Assistant + AI Taskforce co-founder.\n\nStack: Python · C++ · Java · TypeScript · PyTorch · Flutter · Next.js · Supabase · Firebase · Stripe.\n\nUS citizen — eligible for cleared roles. AMCC tennis champion (17-0 singles). Dean's List Spring 2026.";
+const RESUME_LINK = "/Vitaliy_Pikalo_resume.pdf";
 const LINKEDIN_LINK = "https://linkedin.com/in/vitaliypikalo";
+
+const profileBannerClass: Record<string, string> = {
+  recruiter:  "banner-bg-recruiter",
+  developer:  "banner-bg-developer",
+  stalker:    "banner-bg-stalker",
+  adventurer: "banner-bg-adventurer",
+};
 
 function ProfileContent() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const name = (params?.name as string) || "developer";
   const profile = ["recruiter", "developer", "stalker", "adventurer"].includes(name) ? name : "developer";
-  const backgroundGif = searchParams?.get("gif") || "https://i.giphy.com/media/TFPdmm3rdzeZ0kP3zG/giphy.gif";
 
   const topPicks = topPicksConfig[profile] || topPicksConfig.developer;
   const continueWatching = continueWatchingConfig[profile] || continueWatchingConfig.developer;
+  const bannerBgClass = profileBannerClass[profile] || "banner-bg-developer";
 
   return (
     <>
-      <div
-        className="profile-banner"
-        style={{ backgroundImage: `linear-gradient(to top, #141414 0%, transparent 50%), url(${backgroundGif})` }}
-      >
+      <div className={`profile-banner ${bannerBgClass}`}>
         <div className="banner-content">
           <h1 className="banner-headline">{BANNER_HEADLINE}</h1>
           <p className="banner-description">{BANNER_SUMMARY}</p>
@@ -130,7 +133,7 @@ function ProfileContent() {
 
 export default function ProfilePage() {
   return (
-    <Suspense fallback={<div className="profile-banner" style={{ minHeight: "50vh", display: "flex", alignItems: "center", justifyContent: "center" }}>Loading...</div>}>
+    <Suspense fallback={<div className="banner-bg-developer profile-banner" style={{ minHeight: "50vh", display: "flex", alignItems: "center", justifyContent: "center" }}>Loading...</div>}>
       <ProfileContent />
     </Suspense>
   );

@@ -4,34 +4,14 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 
 const profiles = [
-  {
-    name: "recruiter",
-    image: "/profile/recruiter.png",
-    backgroundGif: "https://i.giphy.com/media/16u7Ifl2T4zYfQ932F/giphy.gif",
-  },
-  {
-    name: "developer",
-    image: "/profile/developer.png",
-    backgroundGif: "https://i.giphy.com/media/TFPdmm3rdzeZ0kP3zG/giphy.gif",
-  },
-  {
-    name: "stalker",
-    image: "/profile/stalker.png",
-    backgroundGif: "https://i.giphy.com/media/QjZXUBUr89CkiWLPjL/giphy.gif",
-  },
-  {
-    name: "adventurer",
-    image: "/profile/adventurer.png",
-    backgroundGif: "https://i.giphy.com/media/ERKMnDK6tkzJe8YVa3/giphy.gif",
-  },
+  { name: "recruiter",  image: "/profile/recruiter.png" },
+  { name: "developer",  image: "/profile/developer.png" },
+  { name: "stalker",    image: "/profile/stalker.png"   },
+  { name: "adventurer", image: "/profile/adventurer.png"},
 ];
 
 export default function Browse() {
   const router = useRouter();
-
-  const handleProfileClick = (profile: (typeof profiles)[0]) => {
-    router.push(`/profile/${profile.name}?gif=${encodeURIComponent(profile.backgroundGif)}`);
-  };
 
   return (
     <div className="browse-container">
@@ -42,7 +22,7 @@ export default function Browse() {
             key={profile.name}
             type="button"
             className="profile-card"
-            onClick={() => handleProfileClick(profile)}
+            onClick={() => router.push(`/profile/${profile.name}`)}
             style={{ background: "none", border: "none" }}
           >
             <div className="image-container">
