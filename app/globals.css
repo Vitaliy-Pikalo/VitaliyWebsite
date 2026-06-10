@@ -1069,3 +1069,324 @@ body {
 .travel-badge:hover {
   border-color: #e50914;
 }
+
+/* ── Film grain overlay ── */
+.grain-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.028;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 128px 128px;
+}
+
+/* ── Browse profile picker ── */
+.profile-picker-grid {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 0 20px;
+  margin-bottom: 8rem;
+}
+
+.profile-picker-card {
+  position: relative;
+  width: 200px;
+  min-height: 260px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.06);
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 16px;
+  transition: transform 0.25s cubic-bezier(0.22,1,0.36,1), box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.profile-picker-card:hover {
+  transform: scale(1.06) translateY(-4px);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  border-color: rgba(255,255,255,0.15);
+}
+
+.ppc-glow {
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  opacity: 0.12;
+  filter: blur(40px);
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.profile-picker-card:hover .ppc-glow {
+  opacity: 0.28;
+}
+
+.pp-icon {
+  font-size: 2.6rem;
+  line-height: 1;
+}
+
+.pp-label {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.pp-tagline {
+  font-size: 0.72rem;
+  color: #666;
+  text-align: center;
+  letter-spacing: 0.06em;
+}
+
+.pp-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.pp-tag {
+  font-size: 0.68rem;
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 3px 10px;
+  text-align: center;
+  opacity: 0.75;
+}
+
+@media (max-width: 768px) {
+  .profile-picker-grid { gap: 14px; }
+  .profile-picker-card { width: 160px; min-height: 220px; }
+  .pp-icon { font-size: 2rem; }
+}
+
+/* ── Profile section rows ── */
+.profile-section {
+  padding: 24px 20px 8px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.profile-row-title {
+  font-size: 1.25rem;
+  color: #aaa;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+  border-left: 3px solid #e50914;
+  padding-left: 12px;
+}
+
+/* ── SectionCard ── */
+.section-card-row {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scrollbar-width: none;
+}
+.section-card-row::-webkit-scrollbar { display: none; }
+
+.section-card-link { text-decoration: none; flex-shrink: 0; }
+
+.section-card {
+  border-radius: 12px;
+  padding: 20px 18px;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid rgba(255,255,255,0.06);
+  transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), box-shadow 0.22s ease, border-color 0.22s ease;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.section-card:hover {
+  transform: translateY(-5px) scale(1.02);
+  box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+  border-color: rgba(255,255,255,0.12);
+}
+
+.section-card-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.section-card-body { flex: 1; }
+
+.section-card-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.section-card-previews {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.section-card-previews li {
+  font-size: 0.72rem;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.section-card-arrow {
+  font-size: 0.9rem;
+  color: rgba(255,255,255,0.2);
+  text-align: right;
+  margin-top: 8px;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.section-card:hover .section-card-arrow {
+  color: rgba(255,255,255,0.6);
+  transform: translateX(3px);
+}
+
+/* ── ProjectPreviewCard ── */
+.ppc-row {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  scrollbar-width: none;
+}
+.ppc-row::-webkit-scrollbar { display: none; }
+
+.ppc-wrap {
+  flex-shrink: 0;
+  width: 300px;
+  background: #111;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.07);
+  transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), box-shadow 0.22s ease;
+}
+
+.ppc-wrap:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 20px 50px rgba(229,9,20,0.25);
+}
+
+.ppc-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1e1e1e;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.ppc-dots {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.ppc-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.ppc-dot-red    { background: #ff5f56; }
+.ppc-dot-yellow { background: #ffbd2e; }
+.ppc-dot-green  { background: #27c93f; }
+
+.ppc-url {
+  font-family: monospace;
+  font-size: 0.68rem;
+  color: #666;
+  background: #141414;
+  border-radius: 4px;
+  padding: 2px 8px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ppc-screen {
+  padding: 14px 12px;
+  background: #0d0d0d;
+  min-height: 140px;
+}
+
+.ppc-footer {
+  padding: 10px 12px;
+  background: #141414;
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+
+.ppc-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #e50914;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.ppc-tech-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.ppc-badge {
+  font-size: 0.62rem;
+  background: #1e1e1e;
+  color: #888;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.ppc-links {
+  display: flex;
+  gap: 10px;
+}
+
+.ppc-link {
+  font-size: 0.72rem;
+  color: #555;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.ppc-link:hover { color: #fff; }
+
+.ppc-link-live {
+  color: #22c55e;
+}
+
+.ppc-link-live:hover { color: #4ade80; }
+
+@media (max-width: 768px) {
+  .ppc-wrap { width: 260px; }
+  .profile-section { padding: 16px 14px 4px; }
+}
