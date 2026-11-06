@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Difficulty, GameEngine, HudState, MapInfo, UnitInfo } from "@/lib/game/engine";
 import { abilities, boss, defeat, difficulties, intro, shrines, victory, type AbilityId, type Shrine, type UnitKind } from "@/lib/game/story";
 import { STATS } from "@/lib/game/units";
+import { GameAudio, type AudioSettings } from "@/lib/game/audio";
 import Minimap from "./Minimap";
 
 const RESUME = "/Vitaliy_Pikalo_resume.pdf";
@@ -64,10 +65,32 @@ export default function Campaign() {
   useEffect(() => {
     difficultyRef.current = difficulty;
   }, [difficulty]);
+  const audioRef = useRef<GameAudio | null>(null);
+  const [sound, setSound] = useState<AudioSettings>({ sound: true, music: true, voices: false });
   const panelOpen = useRef(true);
   useEffect(() => {
     panelOpen.current = panel !== null;
   }, [panel]);
+
+  // One audio graph for the whole visit; restarts reuse it.
+  useEffect(() => {
+    const audio = new GameAudio();
+    audioRef.current = audio;
+    setSound(audio.settings);
+    const off = audio.onSettings((s) => setSound({ ...s }));
+    audio.music("explore");
+    // Browsers only allow audio after a gesture, so unlock on the first one.
+    const unlock = () => audio.unlock();
+    window.addEventListener("pointerdown", unlock, true);
+    window.addEventListener("keydown", unlock, true);
+    return () => {
+      off();
+      window.removeEventListener("pointerdown", unlock, true);
+      window.removeEventListener("keydown", unlock, true);
+      audio.dispose();
+      audioRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     let engine: GameEngine | null = null;
@@ -103,6 +126,8 @@ export default function Campaign() {
         });
         if (difficultyRef.current) engine.setDifficulty(difficultyRef.current);
         engine.setPaused(panelOpen.current); // stay paused while the prologue is open
+        if (audioRef.current) engine.setAudio(audioRef.current);
+        audioRef.current?.music("explore");
         engineRef.current = engine;
         setMapInfo(engine.mapInfo);
         if (new URLSearchParams(window.location.search).has("debug")) {
@@ -120,6 +145,7 @@ export default function Campaign() {
 
   const closePanel = useCallback(() => {
     const e = engineRef.current;
+    audioRef.current?.sfx("click");
     if (panel?.type === "shrine") e?.recruitFrom(panel.shrine.id);
     if (panel?.type === "controls" && hud && (hud.status === "won" || hud.status === "lost")) {
       setPanel({ type: "end", result: hud.status });
@@ -132,6 +158,7 @@ export default function Campaign() {
 
   const openControls = () => {
     if (panel) return;
+    audioRef.current?.sfx("click");
     engineRef.current?.setPaused(true);
     setPage(0);
     setPanel({ type: "controls" });
@@ -179,6 +206,15 @@ export default function Campaign() {
         <div className="flex gap-2">
           <Link href="/" className="btn-stone">Back to site</Link>
           <button type="button" className="btn-stone" onClick={openControls}>Controls</button>
+          <button
+            type="button"
+            className="btn-stone"
+            aria-pressed={sound.sound}
+            onClick={() => audioRef.current?.setSettings({ sound: !sound.sound })}
+            title={sound.sound ? "Mute all sound" : "Turn sound on"}
+          >
+            {sound.sound ? "Sound on" : "Sound off"}
+          </button>
         </div>
         <p className="hidden font-display font-semibold tracking-wide text-bone lg:block">The campaign of Vitaliy Pikalo</p>
         <a href={RESUME} target="_blank" rel="noopener noreferrer" className="btn-gold">Skip to resume</a>
@@ -275,7 +311,10 @@ export default function Campaign() {
         <Dialogue
           panel={panel}
           page={page}
-          setPage={setPage}
+          setPage={(n) => {
+            audioRef.current?.sfx("click");
+            setPage(n);
+          }}
           onClose={closePanel}
           onRestart={restart}
           onDifficulty={(d) => {
@@ -284,6 +323,8 @@ export default function Campaign() {
             closePanel();
           }}
           recruited={recruited}
+          sound={sound}
+          setSound={(p) => audioRef.current?.setSettings(p)}
         />
       )}
     </div>
@@ -451,6 +492,8 @@ function Dialogue({
   onRestart,
   onDifficulty,
   recruited,
+  sound,
+  setSound,
 }: {
   panel: NonNullable<Panel>;
   page: number;
@@ -459,6 +502,8 @@ function Dialogue({
   onRestart: () => void;
   onDifficulty: (d: Difficulty) => void;
   recruited: number;
+  sound: AudioSettings;
+  setSound: (p: Partial<AudioSettings>) => void;
 }) {
   let title = "";
   let lines: string[] = [];
@@ -470,14 +515,38 @@ function Dialogue({
     lines = [""];
     action = "Resume";
     extra = (
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-        {CONTROLS.map(([k, v]) => (
-          <div key={k} className="contents">
-            <dt className="font-semibold text-bone">{k}</dt>
-            <dd>{v}</dd>
+      <>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+          {CONTROLS.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="font-semibold text-bone">{k}</dt>
+              <dd>{v}</dd>
+            </div>
+          ))}
+        </dl>
+        <fieldset className="mt-4 border-t border-stone-edge pt-3 text-xs">
+          <legend className="sr-only">Sound</legend>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            {([
+              ["sound", "Sound"],
+              ["music", "Music"],
+              ["voices", "Unit voices"],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="flex cursor-pointer items-center gap-2 text-bone">
+                <input
+                  type="checkbox"
+                  className="accent-[var(--color-gold)]"
+                  checked={sound[key]}
+                  disabled={key !== "sound" && !sound.sound}
+                  onChange={(e) => setSound({ [key]: e.target.checked })}
+                />
+                {label}
+              </label>
+            ))}
           </div>
-        ))}
-      </dl>
+          <p className="mt-2 text-muted">Unit voices use your browser&apos;s speech engine.</p>
+        </fieldset>
+      </>
     );
   } else if (panel.type === "intro") {
     title = intro.title;
