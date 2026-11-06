@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { animateGiant, animateUnit, buildGiant, buildUnit, newAnim, newGiantAnim, type GiantAnim, type GiantRig, type UnitAnim, type UnitRig } from "./models";
+import { animateBraziers, buildBrazier, glowSprite, Particles, type Brazier } from "./fx";
 import { NavGrid, type Point } from "./nav";
 import { abilities, boss as bossDef, shrines, type AbilityId, type Shrine, type UnitKind } from "./story";
 import { STATS } from "./units";
@@ -172,7 +173,9 @@ export class GameEngine {
   private telegraph: { ring: THREE.Mesh; fill: THREE.Mesh; t: number; at: THREE.Vector3 } | null = null;
   private scroll: THREE.Group | null = null;
 
-  private shrineMeshes = new Map<string, { rune: THREE.Mesh; glow: THREE.Mesh }>();
+  private shrineMeshes = new Map<string, { rune: THREE.Mesh; glow: THREE.Mesh; halo: THREE.Sprite }>();
+  private particles = new Particles(600);
+  private braziers: Brazier[] = [];
   private visited = new Set<string>();
   private projectiles: Projectile[] = [];
   private fx: Fx[] = [];
@@ -189,6 +192,7 @@ export class GameEngine {
   private hudTimer = 0;
   private resizeObs: ResizeObserver;
   private disposed = false;
+  private lowPower = false;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -196,7 +200,9 @@ export class GameEngine {
     private cb: EngineCallbacks,
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Phones and tablets get a lighter render: lower pixel ratio and shadow resolution.
+    this.lowPower = window.matchMedia("(pointer: coarse)").matches;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.lowPower ? 1.5 : 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -209,6 +215,7 @@ export class GameEngine {
 
     this.addLights();
     this.buildWorld();
+    this.scene.add(this.particles.mesh);
     this.hero = this.spawn("hero", v2(0, 32), new THREE.Vector3());
     this.hero.order = "idle";
     this.setSelection([this.hero]);
@@ -281,12 +288,14 @@ export class GameEngine {
     if (m) {
       (m.rune.material as THREE.MeshLambertMaterial).emissiveIntensity = 0.15;
       m.glow.visible = false;
+      m.halo.visible = false;
     }
     const slots = [v2(-1.8, 1.8), v2(1.8, 1.8), v2(-1.8, 3.6), v2(1.8, 3.6), v2(0, 3.2)];
     const at = this.nav.nearestOpen({ x: s.at[0] + 2.2, z: s.at[1] + 2.2 });
     const unit = this.spawn(s.recruit, v2(at.x, at.z), slots[this.allies.length % slots.length]);
     this.allies.push(unit);
     this.ring(unit.group.position, s.rune, 3, 0.8);
+    this.particles.burst(unit.group.position.clone().setY(0.5), { count: 26, color: [s.rune, "#ffffff"], speed: 2.5, up: 5, gravity: 6, life: 1.1 });
     this.emitHud();
   }
 
@@ -310,6 +319,7 @@ export class GameEngine {
         revived.ring.visible = false;
         this.scene.add(revived.group);
         this.ring(revived.group.position, "#9cd67e", 2.2, 0.8);
+        this.particles.burst(revived.group.position.clone().setY(0.4), { count: 28, color: ["#9cd67e", "#f2e8c9"], speed: 1.6, up: 5.5, gravity: 3, life: 1.3 });
         this.float(revived.group.position, "Revived", "heal");
       }
       for (const u of this.party()) {
@@ -317,6 +327,7 @@ export class GameEngine {
         u.hp += amt;
         if (amt > 0) this.float(u.group.position, `+${amt}`, "heal");
         this.ring(u.group.position, "#9cd67e", 1.4, 0.5);
+        this.particles.burst(u.group.position.clone().setY(0.6), { count: 7, color: "#9cd67e", speed: 0.6, up: 3, gravity: 1, life: 1 });
       }
       this.flyDrone(hp, revived ? revived.group.position : hp);
     } else if (a === "checkmate") {
@@ -333,7 +344,10 @@ export class GameEngine {
       }
     } else {
       this.kellyLeft = ABILITY.kelly.duration;
-      for (const u of this.party()) this.ring(u.group.position, "#e3c06a", 1.6, 0.6);
+      for (const u of this.party()) {
+        this.ring(u.group.position, "#e3c06a", 1.6, 0.6);
+        this.particles.burst(u.group.position.clone().setY(0.8), { count: 8, color: ["#e3c06a", "#fff3c4"], speed: 1, up: 3.5, gravity: 2, life: 0.9, size: 0.1 });
+      }
       this.float(hp.clone().setY(3), "Kelly bet: 1.5x", "crit");
     }
     this.cds[a] = ABILITY[a].cd;
@@ -430,6 +444,9 @@ export class GameEngine {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         mats.forEach((m) => m.dispose());
       }
+    });
+    this.scene.traverse((o) => {
+      if (o instanceof THREE.Sprite) o.material.dispose(); // the shared glow texture is cached and reused
     });
     this.renderer.dispose();
   }
@@ -830,7 +847,7 @@ export class GameEngine {
     const sun = new THREE.DirectionalLight("#ffe7c2", 2.1);
     sun.position.set(28, 42, 12);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.setScalar(this.lowPower ? 1024 : 2048);
     sun.shadow.bias = -0.0006;
     sun.shadow.normalBias = 0.03;
     const s = 50;
@@ -975,6 +992,14 @@ export class GameEngine {
       this.nav.blockCircle(px, pz, 0.8 + UNIT_RADIUS);
     }
 
+    // Fire bowls around the arena floor, clear of the entrance.
+    for (const a of [Math.PI / 2 - 0.85, Math.PI / 2 + 0.85, (3 * Math.PI) / 2 - 0.95, (3 * Math.PI) / 2 + 0.95]) {
+      const bx = ax + Math.cos(a) * 11.1;
+      const bz = az + Math.sin(a) * 11.1;
+      this.braziers.push(buildBrazier(this.scene, bx, bz));
+      this.nav.blockCircle(bx, bz, 0.5 + UNIT_RADIUS);
+    }
+
     // Forest: pines and broadleaf trees, kept off the road and away from the arena.
     const nearRoad = (x: number, z: number) => roadDist(x, z) < 4.2;
     const nearArena = (x: number, z: number) => Math.hypot(x - ax, z - az) < 15.5;
@@ -1103,9 +1128,12 @@ export class GameEngine {
         g.add(m);
       });
       g.add(glow);
+      const halo = glowSprite(s.rune, 2.4, 0.7);
+      halo.position.y = 3.6;
+      g.add(halo);
       g.position.set(s.at[0], 0, s.at[1]);
       this.scene.add(g);
-      this.shrineMeshes.set(s.id, { rune, glow });
+      this.shrineMeshes.set(s.id, { rune, glow, halo });
       this.nav.blockCircle(s.at[0], s.at[1], 1.6 + UNIT_RADIUS * 0.5);
     }
 
@@ -1193,6 +1221,8 @@ export class GameEngine {
     this.bossAnim.skin = this.shards.length > 0;
     this.bossAnim.stun = this.bossStun;
     animateGiant(this.bossRig, this.bossAnim, adt);
+    this.particles.update(adt);
+    animateBraziers(this.braziers, this.timer.getElapsed());
     this.billboardBars();
     this.renderer.render(this.scene, this.camera);
     this.updateFloaters(this.paused ? 0 : dt);
@@ -1206,6 +1236,8 @@ export class GameEngine {
     const t = this.timer.getElapsed();
 
     for (const [id, m] of this.shrineMeshes) {
+      m.halo.position.y = m.rune.position.y;
+      m.halo.material.opacity = 0.55 + Math.sin(t * 2.5 + m.rune.id) * 0.15;
       m.rune.rotation.y += dt * (this.visited.has(id) ? 0.3 : 1.5);
       m.rune.position.y = 3.6 + Math.sin(t * 2 + m.rune.id) * 0.12;
     }
@@ -1381,6 +1413,7 @@ export class GameEngine {
           const amt = Math.min(st.heal, hurt.max - hurt.hp);
           hurt.hp += amt;
           this.ring(hurt.group.position, "#7e9a63", 1.2, 0.4);
+          this.particles.burst(hurt.group.position.clone().setY(0.7), { count: 6, color: "#9cd67e", speed: 0.5, up: 2.8, gravity: 1, life: 0.9, size: 0.1 });
           if (amt > 0) this.float(hurt.group.position, `+${Math.round(amt)}`, "heal");
         }
         return;
@@ -1547,6 +1580,7 @@ export class GameEngine {
         this.ring(c, "#c25b4a", BOSS.slamRadius + 1, 0.5);
         this.bossAnim.slam = 0;
         this.bossAnim.impact = 0.45;
+        this.particles.burst(c.clone().setY(0.15), { count: 60, color: ["#8a6a42", "#a7a59d", "#6e5233"], speed: 7, up: 2.5, gravity: 7, life: 0.8, spread: 2.5, size: 0.2 });
         this.clearTelegraph();
       }
       return;
@@ -1615,6 +1649,7 @@ export class GameEngine {
       const hp = DIFF[this.diff].shardHp;
       this.shards.push({ id: this.nextId++, group: g, hp, max: hp, atk: 0, hpBar: bar.group, hpFill: bar.fill });
       this.ring(g.position, "#e0503c", 1.8, 0.6);
+      this.particles.burst(g.position.clone().setY(0.4), { count: 14, color: ["#e0503c", "#6d6b63"], speed: 3, up: 5, life: 0.8 });
     }
     this.float(this.bossGroup.position.clone().setY(5), "Stone shards!", "crit");
     this.emitHud();
@@ -1635,8 +1670,10 @@ export class GameEngine {
     if (sh.hp <= 0) return;
     sh.hp -= raw;
     this.float(sh.group.position.clone().setY(1.8), `${Math.round(raw)}`, big ? "crit" : "dmg");
+    this.particles.burst(sh.group.position.clone().setY(0.9), { count: 4, color: ["#e0503c", "#a7a59d"], speed: 2.5, up: 2.5, life: 0.4, size: 0.1 });
     if (sh.hp <= 0) {
       this.ring(sh.group.position, "#e0503c", 1.6, 0.4);
+      this.particles.burst(sh.group.position.clone().setY(0.7), { count: 18, color: ["#6d6b63", "#e0503c", "#8c8a80"], speed: 4, up: 4, life: 0.8, size: 0.18 });
       this.removeShard(sh);
       this.emitHud();
     }
@@ -1722,6 +1759,7 @@ export class GameEngine {
       if (distXZ(u.group.position, b.at) <= BOULDER.radius) this.damage(u, DIFF[this.diff].boulderDmg);
     }
     this.ring(b.at, "#e0503c", BOULDER.radius + 1, 0.5);
+    this.particles.burst(b.at.clone().setY(0.2), { count: 34, color: ["#77756b", "#8a6a42", "#a7a59d"], speed: 5, up: 4.5, life: 0.9, spread: 1, size: 0.22 });
     this.clearBoulder();
   }
 
@@ -1767,6 +1805,7 @@ export class GameEngine {
     this.scene.add(mesh);
     this.fades.push({ obj: mesh, age: 0, life: 0.45 });
     this.ring(at, "#e3c06a", 2.4, 0.5);
+    this.particles.burst(at.clone().setY(0.6), { count: 30, color: ["#e3c06a", "#fff3c4", "#ffffff"], speed: 5, up: 6, life: 0.7, size: 0.12 });
   }
 
   private updateFades(dt: number) {
@@ -1837,8 +1876,10 @@ export class GameEngine {
     const amt = Math.round(raw * DIFF[this.diff].incoming * (this.builderNear(u) ? 0.75 : 1));
     u.hp -= amt;
     this.float(u.group.position, `-${amt}`, "hurt");
+    this.particles.burst(u.group.position.clone().setY(1.1), { count: 4, color: ["#c25b4a", "#e0705c"], speed: 1.8, up: 2, life: 0.4, size: 0.09 });
     if (u.hp <= 0) {
       u.hp = 0;
+      this.particles.burst(u.group.position.clone().setY(0.8), { count: 20, color: [STATS[u.kind].body, STATS[u.kind].trim, "#6d6b63"], speed: 2.5, up: 4, life: 1, size: 0.16 });
       this.scene.remove(u.group);
       this.selected.delete(u);
       u.ring.visible = false;
@@ -1853,6 +1894,15 @@ export class GameEngine {
     const amt = this.shards.length ? raw * STONE_SKIN : raw;
     this.bossHp -= amt;
     this.float(this.bossGroup.position.clone().setY(4), `${Math.round(amt)}`, this.shards.length ? "dmg" : big ? "crit" : "dmg");
+    this.particles.burst(this.bossGroup.position.clone().setY(2.6), {
+      count: big ? 10 : 4,
+      color: this.shards.length ? ["#a7a59d", "#d8d8d8"] : ["#ff9a3c", "#ffd36b", "#a7a59d"],
+      speed: 3,
+      up: 2.5,
+      life: 0.45,
+      spread: 1.2,
+      size: 0.11,
+    });
     const wave = WAVES[this.wavesDone];
     if (wave !== undefined && this.bossHp > 0 && this.bossHp <= this.maxBossHp * wave) {
       this.spawnShards(DIFF[this.diff].waves[this.wavesDone]);
