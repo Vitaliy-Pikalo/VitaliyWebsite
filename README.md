@@ -13,11 +13,30 @@ Personal site of Vitaliy Pikalo, plus a short strategy game that tells the same 
 - Self-hosted fonts via `@fontsource`: Cinzel for display, Inter for body
 - Deployed on Vercel
 
+## Campaign controls
+
+| Input | Action |
+|---|---|
+| Left-click a unit | Select it (Shift adds or removes) |
+| Drag a box | Select every unit inside |
+| Left- or right-click ground | Move the selection |
+| Click the giant | Attack it |
+| A, then click | Attack-move |
+| S / H | Stop / hold position |
+| Q / W | Deploy / Rally (hero abilities) |
+| Ctrl+1–9, then 1–9 | Save and recall control groups (double-tap to center) |
+| Ctrl+A or \` | Select the whole warband |
+| F1 / Space | Select the hero / center the camera |
+| Arrows, screen edge, middle-drag, touch drag | Move the camera |
+| Minimap | Click to look, right-click to send units |
+
+Left-clicking the ground moves units (WC3 only uses right-click) so first-time players can play without knowing RTS controls.
+
 ## Editing content
 
 - Site copy: `lib/content.ts`. Experience entries take an optional `period` for dates.
 - Game story: `lib/game/story.ts` (shrine chapters, recruits, boss text).
-- Game balance: the `STATS`, `BOSS`, `DEPLOY`, and `RALLY` constants at the top of `lib/game/engine.ts`.
+- Game balance: unit stats in `lib/game/units.ts`; `BOSS`, `DEPLOY`, and `RALLY` at the top of `lib/game/engine.ts`.
 - Resume: replace `public/Vitaliy_Pikalo_resume.pdf`.
 
 ## Project structure
@@ -33,9 +52,12 @@ components/
   Spotlight.tsx     pointer light effect
   icons.tsx         inline SVG icons
   game/Campaign.tsx game HUD, dialogue, and engine lifecycle
+  game/Minimap.tsx  rotated minimap
 lib/
   content.ts        site copy
-  game/engine.ts    three.js world, units, combat
+  game/engine.ts    three.js world, units, orders, combat, camera
+  game/nav.ts       grid A* pathfinding
+  game/units.ts     unit stats
   game/story.ts     campaign script
 ```
 
@@ -48,7 +70,7 @@ npm run build
 npm run typecheck
 ```
 
-Append `?debug=1` to `/play` to expose the engine as `window.__campaign` for automated playtests (`debugMoveTo(x, z)`, `debugState()`).
+Append `?debug=1` to `/play` to expose the engine as `window.__campaign` for automated playtests (`debugMoveTo(x, z)`, `debugState()`, `debugProject(x, y, z)`, `debugUnitsInObstacles()`).
 
 ## Credits
 
