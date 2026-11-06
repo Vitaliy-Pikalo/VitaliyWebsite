@@ -1,22 +1,32 @@
-import type { Metadata } from "next";
-import { Inter, Space_Grotesk } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import "@fontsource-variable/inter";
+import "@fontsource/cinzel/600.css";
+import "@fontsource/cinzel/700.css";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-});
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space-grotesk",
-  display: "swap",
-});
+const description =
+  "Computer engineering student at Penn State building ML systems, trading tools, and full-stack apps.";
 
 export const metadata: Metadata = {
-  title: "Vitaliy Pikalo | Computer Engineering Student • Builder • Competitor",
-  description: "Computer Engineering student at Penn State and collegiate tennis player building high-performance software, systems, and products.",
+  metadataBase: new URL("https://www.vitaliypikalo.com"),
+  title: "Vitaliy Pikalo",
+  description,
+  openGraph: {
+    title: "Vitaliy Pikalo",
+    description,
+    url: "https://www.vitaliypikalo.com",
+    siteName: "Vitaliy Pikalo",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Vitaliy Pikalo",
+    description,
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#1c2230",
 };
 
 export default function RootLayout({
@@ -25,12 +35,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="scroll-smooth">
-      <body className={`${inter.variable} ${spaceGrotesk.variable} antialiased`}>
-        {/* Netflix-style film grain overlay */}
-        <div className="grain-overlay" aria-hidden />
-        {children}
-      </body>
+    <html lang="en">
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

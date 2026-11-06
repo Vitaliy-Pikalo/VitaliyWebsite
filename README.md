@@ -1,74 +1,94 @@
-# Vitaliy Pikalo Portfolio Website
+# vitaliypikalo.com
 
-A modern, high-performance personal portfolio website built with Next.js, TypeScript, Tailwind CSS, and Framer Motion.
+Personal site of Vitaliy Pikalo, plus a short strategy game that tells the same story.
 
-## Features
+- `/`: single-page portfolio (about, experience, projects, open source, beyond code, contact)
+- `/play`: the campaign, a Warcraft III-inspired game built with three.js. Visit five shrines to recruit a warband, then defeat the Final Round to win the resume.
 
-- **Modern Design**: Dark minimal background with bold typography and subtle animations
-- **Fully Responsive**: Optimized for all screen sizes
-- **Smooth Animations**: Scroll-triggered animations using Framer Motion
-- **Fast Loading**: Optimized for performance
-- **Clean Architecture**: Well-organized component structure
+## Stack
 
-## Tech Stack
+- Next.js 16 (App Router), React 19, TypeScript
+- Tailwind CSS 4 (tokens in `app/globals.css` under `@theme`)
+- three.js for the game (loaded only on `/play`)
+- Self-hosted fonts via `@fontsource`: Cinzel for display, Inter for body
+- Deployed on Vercel
 
-- **Next.js 14** (App Router)
-- **TypeScript**
-- **Tailwind CSS**
-- **Framer Motion**
-- **React Icons**
+## Campaign controls
 
-## Getting Started
+| Input | Action |
+|---|---|
+| Left-click a unit | Select it (Shift adds or removes) |
+| Drag a box | Select every unit inside |
+| Left- or right-click ground | Move the selection |
+| Click the giant | Attack it |
+| A, then click | Attack-move |
+| S / H | Stop / hold position |
+| Q / W / E | Medical Drone / Checkmate / Kelly Bet (hero abilities) |
+| Ctrl+1–9, then 1–9 | Save and recall control groups (double-tap to center) |
+| Ctrl+A or \` | Select the whole warband |
+| F1 / Space | Select the hero / center the camera |
+| Arrows, screen edge, middle-drag, touch drag | Move the camera |
+| Minimap | Click to look, right-click to send units |
 
-1. Install dependencies:
+### The Final Round
+
+- **Slam:** a red circle fills under the giant. Recruits step out; you move Vitaliy.
+- **Boulder** (below 85% health): a small red zone appears under a backline unit, healer first, and fills over 3 seconds; then the boulder lands there. That unit doesn't dodge on its own: select it and step it out.
+- **Stone shards** (at 55% and 25%): adds that hunt the healer and ranged units. The giant takes half damage while any shard lives.
+- **Difficulty:** Story is meant to be won by selecting everyone and attacking; Veteran punishes ignoring the mechanics. Tuning lives in `DIFF` in `lib/game/engine.ts`.
+
+### Vitaliy's abilities
+
+Vitaliy auto-attacks; the player only presses abilities. Each comes from a project and unlocks at that chapter's shrine.
+
+| Key | Ability | From | Effect | Unlocks at |
+|---|---|---|---|---|
+| Q | Medical Drone | CMU Project Ignite | Revives the last fallen recruit at half health, heals everyone 30% (20 s) | The Academy |
+| W | Checkmate | Chess960-NN | 170 damage to the nearest enemy; stuns the giant 1.6 s and cancels a slam (10 s) | The Chess Forge |
+| E | Kelly Bet | Kalshi bot | Warband deals 1.5x damage for 6 s (20 s) | The Market Watch |
+
+Left-clicking the ground moves units (WC3 only uses right-click) so first-time players can play without knowing RTS controls.
+
+## Editing content
+
+- Site copy: `lib/content.ts`. Every experience entry needs a `period` (dates).
+- Game story: `lib/game/story.ts` (shrine chapters, recruits, abilities, boss text).
+- Game balance: unit stats in `lib/game/units.ts`; `BOSS`, `DIFF`, `SHARD`, `BOULDER`, and `ABILITY` at the top of `lib/game/engine.ts`.
+- Resume: replace `public/Vitaliy_Pikalo_resume.pdf`.
+
+## Project structure
+
+```
+app/
+  page.tsx          main site
+  play/page.tsx     game route
+  globals.css       theme tokens, HUD styles
+  icon.svg          favicon
+components/
+  SideNav.tsx       scroll-spy section nav
+  Spotlight.tsx     pointer light effect
+  icons.tsx         inline SVG icons
+  game/Campaign.tsx game HUD, dialogue, and engine lifecycle
+  game/Minimap.tsx  rotated minimap
+lib/
+  content.ts        site copy
+  game/engine.ts    three.js world, units, orders, combat, camera
+  game/nav.ts       grid A* pathfinding
+  game/units.ts     unit stats
+  game/story.ts     campaign script
+```
+
+## Development
+
 ```bash
 npm install
-```
-
-2. Run the development server:
-```bash
-npm run dev
-```
-
-3. Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-## Build for Production
-
-```bash
+npm run dev        # http://localhost:3000
 npm run build
-npm start
+npm run typecheck
 ```
 
-## Project Structure
+Append `?debug=1` to `/play` to expose the engine as `window.__campaign` for automated playtests (`debugMoveTo(x, z)`, `debugState()`, `debugProject(x, y, z)`, `debugUnitsInObstacles()`, `debugSkipToBoss()`, `debugAttack(kinds, target)`, `debugMoveKinds(kinds, x, z)`).
 
-```
-├── app/
-│   ├── layout.tsx       # Root layout with fonts
-│   ├── page.tsx          # Main page component
-│   └── globals.css       # Global styles
-├── components/
-│   ├── Navbar.tsx        # Sticky navigation bar
-│   ├── Hero.tsx          # Hero section
-│   ├── About.tsx         # About section
-│   ├── Experience.tsx    # Experience section
-│   ├── Projects.tsx      # Projects section
-│   ├── HackathonProjects.tsx  # Hackathon projects
-│   ├── Skills.tsx        # Skills section
-│   ├── Certifications.tsx # Certifications section
-│   ├── Achievements.tsx  # Achievements section
-│   ├── Contact.tsx       # Contact section
-│   └── TickerBackground.tsx # Animated background
-└── ...
-```
+## Credits
 
-## Customization
-
-All content is defined within the component files. Edit the respective component files to update:
-- Personal information
-- Projects and experience
-- Skills and certifications
-- Contact information
-
-## License
-
-MIT
+Layout inspired by [Brittany Chiang](https://brittanychiang.com). The game is original work inspired by Warcraft III: The Frozen Throne and uses no Blizzard assets.
