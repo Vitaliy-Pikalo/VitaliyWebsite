@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { animateGiant, animateUnit, buildGiant, buildUnit, newAnim, newGiantAnim, type GiantAnim, type GiantRig, type UnitAnim, type UnitRig } from "./models";
 import { NavGrid, type Point } from "./nav";
 import { abilities, boss as bossDef, shrines, type AbilityId, type Shrine, type UnitKind } from "./story";
 import { STATS } from "./units";
@@ -86,7 +87,8 @@ type Unit = {
   hpBar: THREE.Group;
   hpFill: THREE.Mesh;
   ring: THREE.Mesh;
-  bob: number;
+  rig: UnitRig;
+  anim: UnitAnim;
 };
 
 type Shard = { id: number; group: THREE.Group; hp: number; max: number; atk: number; hpBar: THREE.Group; hpFill: THREE.Mesh };
@@ -153,6 +155,8 @@ export class GameEngine {
   private boxEl: HTMLDivElement;
 
   private bossGroup!: THREE.Group;
+  private bossRig!: GiantRig;
+  private bossAnim: GiantAnim = newGiantAnim();
   private bossHp = DIFF.story.bossHp;
   private bossAtk = 0;
   private diff: Difficulty = "story";
@@ -333,6 +337,7 @@ export class GameEngine {
       this.float(hp.clone().setY(3), "Kelly bet: 1.5x", "crit");
     }
     this.cds[a] = ABILITY[a].cd;
+    this.hero.anim.attack = this.hero.anim.attackDur = 0.45;
     this.emitHud();
     return true;
   }
@@ -1108,34 +1113,14 @@ export class GameEngine {
   }
 
   private buildBoss() {
-    const g = new THREE.Group();
-    const stone = flat("#77756b");
-    const dark = flat("#5b5a52");
-    const eye = flat("#e3c06a", { emissive: "#e3c06a", emissiveIntensity: 1.5 });
-    const part = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      m.castShadow = true;
-      g.add(m);
-      return m;
-    };
-    part(new THREE.BoxGeometry(0.8, 1.6, 0.8), dark, -0.6, 0.8, 0);
-    part(new THREE.BoxGeometry(0.8, 1.6, 0.8), dark, 0.6, 0.8, 0);
-    part(new THREE.BoxGeometry(2.4, 2.0, 1.4), stone, 0, 2.6, 0);
-    part(new THREE.BoxGeometry(1.0, 0.9, 1.0), stone, 0, 4.1, 0);
-    part(new THREE.BoxGeometry(0.18, 0.12, 0.05), eye, -0.22, 4.15, 0.52);
-    part(new THREE.BoxGeometry(0.18, 0.12, 0.05), eye, 0.22, 4.15, 0.52);
-    part(new THREE.BoxGeometry(0.7, 2.2, 0.7), dark, -1.6, 2.4, 0);
-    part(new THREE.BoxGeometry(0.7, 2.2, 0.7), dark, 1.6, 2.4, 0);
-    part(new THREE.DodecahedronGeometry(0.6, 0), stone, -1.6, 1.2, 0);
-    part(new THREE.DodecahedronGeometry(0.6, 0), stone, 1.6, 1.2, 0);
-    g.scale.setScalar(1.25);
-    g.position.set(bossDef.arena[0], 0, bossDef.arena[1]);
+    this.bossRig = buildGiant();
+    const g = this.bossRig.root;
+    g.position.set(bossDef.arena[0], 0.04, bossDef.arena[1]);
     this.scene.add(g);
     this.bossGroup = g;
 
     const bar = this.makeBar(3.2, "#c25b4a");
-    bar.group.position.y = 6.6;
+    bar.group.position.y = 5.4;
     g.add(bar.group);
     this.bossHpBar = bar.group;
     this.bossHpFill = bar.fill;
@@ -1155,41 +1140,8 @@ export class GameEngine {
 
   private spawn(kind: UnitKind, at: THREE.Vector3, slot: THREE.Vector3): Unit {
     const st = STATS[kind];
-    const g = new THREE.Group();
-    const body = flat(st.body);
-    const trim = flat(st.trim);
-    const skin = flat("#c99a74");
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, rx = 0) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      m.rotation.x = rx;
-      m.castShadow = true;
-      g.add(m);
-      return m;
-    };
-    add(new THREE.CylinderGeometry(0.32, 0.45, 1.0, 7), body, 0, 0.75, 0);
-    add(new THREE.SphereGeometry(0.27, 8, 6), skin, 0, 1.5, 0);
-    add(new THREE.BoxGeometry(0.95, 0.18, 0.4), trim, 0, 1.2, 0);
-    add(new THREE.BoxGeometry(0.62, 0.9, 0.06), trim, 0, 0.85, -0.3, 0.15); // cape
-
-    if (kind === "hero") {
-      add(new THREE.ConeGeometry(0.3, 0.35, 6), trim, 0, 1.82, 0);
-      add(new THREE.BoxGeometry(0.1, 1.1, 0.1), flat("#d8d8d8"), 0.55, 0.9, 0.2);
-    } else if (kind === "engineer") {
-      add(new THREE.BoxGeometry(0.12, 0.7, 0.55), trim, -0.5, 0.85, 0.15);
-      add(new THREE.BoxGeometry(0.4, 0.25, 0.12), flat("#9a9a9a"), 0.5, 0.95, 0.25);
-    } else if (kind === "strategist") {
-      add(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 5), flat("#6b4a2a"), 0.45, 0.9, 0.1);
-      add(new THREE.OctahedronGeometry(0.15), flat(st.trim, { emissive: st.trim, emissiveIntensity: 1 }), 0.45, 1.75, 0.1);
-    } else if (kind === "quant") {
-      add(new THREE.TorusGeometry(0.38, 0.04, 4, 10, Math.PI), flat("#6b4a2a"), 0.45, 0.9, 0.1);
-    } else if (kind === "banner") {
-      add(new THREE.CylinderGeometry(0.04, 0.04, 2.0, 5), flat("#6b4a2a"), 0.4, 1.1, -0.1);
-      add(new THREE.BoxGeometry(0.02, 0.55, 0.4), trim, 0.42, 1.8, 0.1);
-    } else if (kind === "builder") {
-      add(new THREE.BoxGeometry(0.5, 0.5, 0.35), flat("#7a5c3a"), 0, 1.0, -0.4);
-      add(new THREE.BoxGeometry(0.3, 0.18, 0.1), flat("#9a9a9a"), 0.5, 0.9, 0.25);
-    }
+    const rig = buildUnit(kind);
+    const g = rig.root;
 
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.62, 0.76, 28),
@@ -1200,12 +1152,11 @@ export class GameEngine {
     ring.visible = false;
     g.add(ring);
 
-    g.scale.setScalar(st.scale);
     g.position.set(at.x, this.groundY(at.x, at.z), at.z);
     this.scene.add(g);
 
     const bar = this.makeBar(1.1, kind === "hero" ? "#e3c06a" : "#7e9a63");
-    bar.group.position.y = 2.35;
+    bar.group.position.y = kind === "strategist" ? 2.75 : 2.5;
     g.add(bar.group);
 
     return {
@@ -1223,7 +1174,8 @@ export class GameEngine {
       hpBar: bar.group,
       hpFill: bar.fill,
       ring,
-      bob: Math.random() * 6,
+      rig,
+      anim: newAnim(),
     };
   }
 
@@ -1236,6 +1188,11 @@ export class GameEngine {
     const dt = Math.min(this.timer.getDelta(), 0.05);
     if (!this.paused) this.update(dt);
     this.updateCamera(this.paused ? 0 : dt);
+    const adt = this.paused ? 0 : dt;
+    for (const u of this.party()) animateUnit(u.rig, u.anim, u.kind, adt);
+    this.bossAnim.skin = this.shards.length > 0;
+    this.bossAnim.stun = this.bossStun;
+    animateGiant(this.bossRig, this.bossAnim, adt);
     this.billboardBars();
     this.renderer.render(this.scene, this.camera);
     this.updateFloaters(this.paused ? 0 : dt);
@@ -1338,8 +1295,8 @@ export class GameEngine {
     p.x += (dx / d) * step;
     p.z += (dz / d) * step;
     u.group.rotation.y = Math.atan2(dx, dz);
-    u.bob += dt * 12;
-    p.y = this.groundY(p.x, p.z) + Math.abs(Math.sin(u.bob)) * 0.06;
+    u.anim.moved = true;
+    p.y = this.groundY(p.x, p.z);
   }
 
   private face(u: Unit, target: THREE.Vector3) {
@@ -1420,6 +1377,7 @@ export class GameEngine {
         u.atk -= dt;
         if (u.atk <= 0) {
           u.atk = st.cd;
+          u.anim.attack = u.anim.attackDur = 0.5;
           const amt = Math.min(st.heal, hurt.max - hurt.hp);
           hurt.hp += amt;
           this.ring(hurt.group.position, "#7e9a63", 1.2, 0.4);
@@ -1464,6 +1422,7 @@ export class GameEngine {
       u.atk -= dt;
       if (u.atk <= 0) {
         u.atk = st.cd;
+        u.anim.attack = u.anim.attackDur = st.ranged ? 0.45 : 0.38;
         if (st.ranged) {
           const crit = !!st.crit && Math.random() < st.crit;
           this.shoot(u.group.position, tgt, st.dmg * this.dmgMult() * (crit ? 2 : 1), crit, st.trim);
@@ -1572,7 +1531,6 @@ export class GameEngine {
 
     if (this.bossStun > 0) {
       this.bossStun -= dt;
-      this.bossGroup.rotation.z = this.bossStun > 0 ? Math.sin(this.bossStun * 40) * 0.04 : 0;
       return;
     }
 
@@ -1580,14 +1538,15 @@ export class GameEngine {
       this.telegraph.t += dt;
       const k = Math.min(1, this.telegraph.t / BOSS.slamWindup);
       this.telegraph.fill.scale.setScalar(Math.max(0.01, k));
-      this.bossGroup.position.y = k * 0.6;
+      this.bossAnim.slam = k;
       if (k >= 1) {
         const c = this.telegraph.at;
         for (const u of party) {
           if (distXZ(u.group.position, c) <= BOSS.slamRadius) this.damage(u, BOSS.slamDmg);
         }
         this.ring(c, "#c25b4a", BOSS.slamRadius + 1, 0.5);
-        this.bossGroup.position.y = 0;
+        this.bossAnim.slam = 0;
+        this.bossAnim.impact = 0.45;
         this.clearTelegraph();
       }
       return;
@@ -1618,6 +1577,7 @@ export class GameEngine {
       const step = Math.min(d - reach, BOSS.speed * dt);
       const dir = target.group.position.clone().sub(bp).setY(0).normalize();
       bp.addScaledVector(dir, step);
+      this.bossAnim.moved = true;
       const off = bp.clone().sub(home).setY(0);
       if (off.length() > 11) bp.copy(home.clone().add(off.setLength(11)));
       return;
@@ -1625,6 +1585,7 @@ export class GameEngine {
     this.bossAtk -= dt;
     if (this.bossAtk <= 0) {
       this.bossAtk = BOSS.cd;
+      this.bossAnim.punch = 0.55;
       this.damage(target, BOSS.dmg);
     }
   }
@@ -1857,6 +1818,7 @@ export class GameEngine {
   }
 
   private clearTelegraph() {
+    this.bossAnim.slam = 0;
     if (!this.telegraph) return;
     for (const m of [this.telegraph.ring, this.telegraph.fill]) {
       this.scene.remove(m);
@@ -1902,8 +1864,7 @@ export class GameEngine {
       this.clearTelegraph();
       this.clearBoulder();
       [...this.shards].forEach((sh) => this.removeShard(sh));
-      this.bossGroup.rotation.x = -Math.PI / 2.2;
-      this.bossGroup.position.y = 0.6;
+      this.bossAnim.dead = 0.01;
       this.dropScroll(this.bossGroup.position.clone());
       this.finish("won");
     }
