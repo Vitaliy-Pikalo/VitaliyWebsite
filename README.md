@@ -89,6 +89,22 @@ npm run typecheck
 
 Append `?debug=1` to `/play` to expose the engine as `window.__campaign` for automated playtests (`debugMoveTo(x, z)`, `debugState()`, `debugProject(x, y, z)`, `debugUnitsInObstacles()`, `debugSkipToBoss()`, `debugAttack(kinds, target)`, `debugMoveKinds(kinds, x, z)`).
 
+## Workflow
+
+`main` is production: every push to it deploys vitaliypikalo.com. Work never lands on `main` directly.
+
+1. **Branch** from `main`, one branch per feature: `feature/<name>`, `fix/<name>`, `content/<name>`, or `docs/<name>`.
+2. **Commit** in small, buildable steps with conventional messages (`feat(game): ...`, `fix: ...`, `content: ...`, `docs: ...`, `perf: ...`). Push after each commit; Vercel builds a preview for every push.
+3. **Release checks** before merging:
+   - `npm run typecheck` and `npm run build` pass, `npm audit --omit=dev` is clean
+   - routes respond and old URLs still redirect
+   - the campaign plays end to end (all shrines, unlocks, boss win on Story) and new mechanics are checked on Veteran
+   - the Vercel preview for the branch's last commit is READY
+4. **Merge** into `main` with a merge commit (`git merge --no-ff`) whose message summarizes the feature and the checks run.
+5. **Verify** the production deployment is READY and the live site serves the change, then delete the branch.
+
+If production breaks, roll back to the previous deployment in Vercel first, then fix forward on a `fix/` branch.
+
 ## Credits
 
 Layout inspired by [Brittany Chiang](https://brittanychiang.com). The game is original work inspired by Warcraft III: The Frozen Throne and uses no Blizzard assets.
