@@ -117,10 +117,10 @@ export default function Home() {
               <ol className="space-y-10">
                 {experience.map((job) => (
                   <li key={job.role} className="grid gap-1 sm:grid-cols-[9rem_1fr] sm:gap-6">
-                    <p className="pt-0.5 text-xs leading-6 text-muted">{job.period ?? job.org}</p>
+                    <p className="pt-0.5 text-xs leading-6 text-muted">{job.period}</p>
                     <div>
                       <h3 className="font-medium leading-snug text-bone">{job.role}</h3>
-                      {job.period && <p className="text-sm text-muted">{job.org}</p>}
+                      <p className="text-sm text-muted">{job.org}</p>
                       <p className="mt-2 text-sm leading-relaxed">{job.summary}</p>
                       <Tags items={job.tags} />
                     </div>

@@ -67,8 +67,8 @@ export const shrines: Shrine[] = [
     id: "fund",
     title: "The Treasury",
     lines: [
-      "As an equity analyst at the Intrieri Family Student Managed Fund, I help manage a live $1.6M portfolio under CFA standards.",
-      "I also lead a four-person freelance team that has shipped 10+ production apps, and I teach AI tools to 100+ students as a TA.",
+      "As an equity analyst at the Intrieri Family Student Managed Fund, I helped manage a live $1.6M portfolio under CFA standards.",
+      "I also led a four-person freelance team that shipped 10+ booking apps for local businesses, and I lectured 100+ students on AI tools as a TA.",
     ],
     recruit: "banner",
     recruitName: "Banner Bearer",
@@ -80,7 +80,7 @@ export const shrines: Shrine[] = [
     id: "outpost",
     title: "The Open Outpost",
     lines: [
-      "I contribute to open source. My pull request to marimo lets its audio player accept PyTorch and JAX arrays directly. It was merged and shipped in v0.23.12.",
+      "I contribute to open source. I've had pull requests merged into marimo, so its audio player accepts PyTorch and JAX arrays, and into lancedb, which now gives a clear error instead of an opaque one.",
       "Off the keyboard: varsity tennis, a 17-0 singles season, and an AMCC conference title. Competing taught me to keep my head in long matches.",
     ],
     recruit: "builder",
