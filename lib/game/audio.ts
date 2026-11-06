@@ -1,4 +1,5 @@
 import { Score, type MusicMode } from "./music";
+import type { UnitKind } from "./story";
 
 // Procedural sound for the campaign: every effect is synthesized with the Web Audio API,
 // so the game ships no audio files. Effects take any BaseAudioContext, which lets tests
@@ -381,6 +382,16 @@ function loadSettings(): AudioSettings {
   return { ...DEFAULTS };
 }
 
+// Speech settings per unit, so each one sounds a little different.
+const VOICE: Record<UnitKind, { pitch: number; rate: number }> = {
+  hero: { pitch: 1.0, rate: 1.05 },
+  engineer: { pitch: 0.6, rate: 0.95 },
+  strategist: { pitch: 1.2, rate: 0.9 },
+  quant: { pitch: 1.1, rate: 1.15 },
+  banner: { pitch: 1.35, rate: 1.0 },
+  builder: { pitch: 0.85, rate: 1.1 },
+};
+
 /** Owns the AudioContext, the mix buses, and the player's sound settings. */
 export class GameAudio {
   ctx: AudioContext | null = null;
@@ -475,6 +486,21 @@ export class GameAudio {
     if (gap && now - (this.last.get(name) ?? -1) < gap) return;
     this.last.set(name, now);
     playSfx({ ctx, dry: this.sfxBus, wet: this.reverbIn, t: now + 0.005 }, name, opts);
+  }
+
+  /** Speaks a unit's line if the player turned on unit voices. */
+  speak(kind: UnitKind, text: string) {
+    if (!this.settings.sound || !this.settings.voices || typeof window === "undefined") return;
+    const synth = window.speechSynthesis;
+    if (!synth || typeof SpeechSynthesisUtterance === "undefined") return;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    const en = synth.getVoices().find((v) => v.lang.startsWith("en"));
+    if (en) u.voice = en;
+    u.pitch = VOICE[kind].pitch;
+    u.rate = VOICE[kind].rate;
+    u.volume = 0.8;
+    synth.speak(u);
   }
 
   dispose() {

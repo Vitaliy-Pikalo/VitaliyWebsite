@@ -28,6 +28,35 @@ export const abilities: Record<AbilityId, { name: string; hotkey: string; source
   },
 };
 
+// Acknowledgements when a unit is selected or given an order. Shown above the unit and,
+// if the player turns on unit voices, spoken with the browser's speech synthesis.
+export const barks: Record<UnitKind, { select: string[]; order: string[] }> = {
+  hero: {
+    select: ["Ready.", "What's the plan?", "Let's ship it."],
+    order: ["On it.", "Moving.", "Done by Friday."],
+  },
+  engineer: {
+    select: ["Built to last.", "Hard hat's on."],
+    order: ["Laying the groundwork.", "Let's build it."],
+  },
+  strategist: {
+    select: ["Thinking a few moves ahead.", "Your move."],
+    order: ["As calculated.", "Every move has a reason."],
+  },
+  quant: {
+    select: ["What's the edge?", "Odds look good."],
+    order: ["Sizing in.", "Positive expected value."],
+  },
+  banner: {
+    select: ["I've got your back.", "Stay together."],
+    order: ["Right behind you.", "Holding the line."],
+  },
+  builder: {
+    select: ["Tools ready.", "What needs fixing?"],
+    order: ["Patching it up.", "On it."],
+  },
+};
+
 export type Shrine = {
   id: string;
   title: string;

@@ -366,3 +366,14 @@ body {
     width: 3.1rem;
   }
 }
+
+.floater-bark {
+  border: 1px solid rgba(201, 162, 74, 0.5);
+  border-radius: 2px;
+  background: rgba(22, 27, 38, 0.82);
+  padding: 1px 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-bone);
+  text-shadow: none;
+}
