@@ -15,7 +15,7 @@ export const profile = {
 
 export const about: string[] = [
   "I'm a computer engineering student at Penn State University Park, graduating in May 2028. I like problems where the answer can be measured: an engine's Elo, a model's calibration, whether a payment flow survives real users.",
-  "My best work so far is an AlphaZero-style Chess960 engine trained through self-play, and a prediction-market bot that logged hundreds of thousands of market snapshots. That bot also taught me to distrust a good-looking result until the sample size backs it up.",
+  "My best work so far is an AlphaZero-style Chess960 engine trained through self-play, a prediction-market bot that logged hundreds of thousands of market snapshots, and a research pipeline built to reject strategies that only look good by chance. Both of the last two taught me to distrust a good-looking result until the statistics back it up.",
   "Outside class I've led a four-person freelance team shipping production apps, co-managed a $1.6M student equity fund, and lectured 100+ students on AI tools. Right now I'm building Pikalo, a finance education platform for immigrants and young Americans.",
 ];
 
@@ -98,12 +98,39 @@ export const projects: Project[] = [
     ],
   },
   {
+    name: "Pikalo",
+    summary: "Financial education for immigrants and first-time U.S. filers, with every answer tied to an IRS source.",
+    detail:
+      "A live tax-residency checker built on the IRS substantial presence test, plus FICA-refund and Roth IRA calculators. Its AI tutor, in waitlist beta, retrieves from 1,491 IRS passages and takes every number from calculator tools over MCP instead of the model; answers it can't verify go to a human review queue. An eval suite runs in CI.",
+    tags: ["Next.js", "TypeScript", "Supabase", "RAG", "MCP", "AWS CDK", "Amazon Bedrock"],
+    links: [
+      { label: "Live", href: "https://pikalo.org" },
+      { label: "Source", href: "https://github.com/Vitaliy-Pikalo/pikalo.ai" },
+    ],
+  },
+  {
+    name: "Quant research pipeline",
+    summary: "A backtesting pipeline built to catch false discoveries, run against real public data.",
+    detail:
+      "Purged and combinatorial cross-validation, walk-forward splits, a point-in-time feature store, transaction costs, and overfitting statistics (deflated Sharpe ratio, probability of backtest overfitting, Benjamini-Hochberg FDR), with 49 tests. I tested FX carry, 13F copycat investing, and Fed Beige Book sentiment, counting all 78 trials across hypotheses. None survived, and the write-up reports the negative results.",
+    tags: ["Python", "Statistics", "Backtesting", "pytest"],
+    links: [{ label: "Source", href: "https://github.com/Vitaliy-Pikalo/quant-research-pipeline" }],
+  },
+  {
     name: "Kalshi trading bot",
     summary: "Paper-trading daemon for prediction markets, with calibration checks.",
     detail:
       "A fault-tolerant 24/7 daemon against Kalshi's live API that prices contracts with a log-normal volatility model and sizes positions with fractional Kelly (k = 0.25). It has logged 270K+ snapshots and 13K+ predictions to SQLite and survives restarts with the database as the source of truth. I fixed concurrent-write failures with WAL journaling and traced an 18x data-inflation bug to a bad SQL join. When an early profit turned out to be sampling variance, I added calibration analysis so the bot reports how reliable its probabilities are.",
     tags: ["Python", "SQLite", "SQLAlchemy", "Quant modeling"],
     links: [{ label: "Source", href: "https://github.com/Vitaliy-Pikalo/kalshi-trading-bot" }],
+  },
+  {
+    name: "Peaklo",
+    summary: "Internship finder that pulls postings straight from company hiring systems. In beta.",
+    detail:
+      "Ingests postings from Greenhouse and Lever, normalizes them into one schema with a CI-checked classifier, and runs on a Postgres job scheduler with health checks, replayable raw payloads, and a dead-man's-switch heartbeat. 267 tests at 91% coverage, strict mypy, reversible migrations.",
+    tags: ["Python", "FastAPI", "PostgreSQL", "Docker", "GitHub Actions"],
+    links: [{ label: "Source", href: "https://github.com/Vitaliy-Pikalo/peaklo" }],
   },
   {
     name: "Levee",
@@ -116,17 +143,16 @@ export const projects: Project[] = [
       { label: "Source", href: "https://github.com/AHasenbein/Levee" },
     ],
   },
-  {
-    name: "Bonfire",
-    summary: "Multiplayer party game with LLM-generated prompts, built by a team of three.",
-    detail:
-      "I owned the Firebase backend: Firestore data models, repositories, security rules, Riverpod providers, the test suite, and GitHub Actions CI.",
-    tags: ["Flutter", "Firebase", "Riverpod", "Groq LLM"],
-    links: [],
-  },
 ];
 
 export const openSource = [
+  {
+    repo: "statsmodels",
+    title: "Fix the Binomial family's derivative",
+    detail:
+      "Merged pull request #9862: Binomial.deriv() was missing a division by n, so it returned the wrong derivative for binomial counts.",
+    href: "https://github.com/statsmodels/statsmodels/pull/9862",
+  },
   {
     repo: "lancedb",
     title: "Clear error for vector-column type inference",
