@@ -82,6 +82,13 @@ export default function Minimap({ map, state, onFocus, onOrder, size = 148 }: Pr
       g.fill();
     }
 
+    // Stone shards.
+    g.fillStyle = "#e0705c";
+    for (const sh of state.shards) {
+      const p = px(sh.x, sh.z);
+      g.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+    }
+
     // Units.
     for (const u of state.units) {
       const p = px(u.x, u.z);

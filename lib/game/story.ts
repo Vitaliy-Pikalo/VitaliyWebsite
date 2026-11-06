@@ -94,8 +94,22 @@ export const shrines: Shrine[] = [
 export const boss = {
   name: "The Final Round",
   arena: [0, -30] as [number, number],
-  intro:
-    "A stone giant guards the scroll that holds my resume. Watch for the red circle on the ground: when it fills, it slams. Move your hero out of it.",
+  intro: [
+    "A stone giant guards the scroll that holds my resume. When a red circle fills under it, it slams. Your recruits step out on their own, but you have to move Vitaliy.",
+    "Once it's hurt, it hurls boulders at your backline. A purple circle marks the target: select that unit and move it out.",
+    "At half health it calls stone shards that hunt your healer and ranged units. While any shard lives, the giant takes half damage. Send your fighters to break them.",
+  ],
+};
+
+export const difficulties = {
+  story: {
+    label: "Story",
+    blurb: "For seeing the story. Enemies hit softer, so selecting everyone and attacking works.",
+  },
+  veteran: {
+    label: "Veteran",
+    blurb: "Full-strength giant. You'll need to dodge, peel shards, and protect your healer.",
+  },
 };
 
 export const victory = {

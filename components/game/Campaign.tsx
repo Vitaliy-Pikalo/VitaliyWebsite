@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameEngine, HudState, MapInfo, UnitInfo } from "@/lib/game/engine";
-import { boss, defeat, intro, shrines, victory, type Shrine, type UnitKind } from "@/lib/game/story";
+import type { Difficulty, GameEngine, HudState, MapInfo, UnitInfo } from "@/lib/game/engine";
+import { boss, defeat, difficulties, intro, shrines, victory, type Shrine, type UnitKind } from "@/lib/game/story";
 import { STATS } from "@/lib/game/units";
 import Minimap from "./Minimap";
 
@@ -59,6 +59,11 @@ export default function Campaign() {
   const [failed, setFailed] = useState(false);
   const [runKey, setRunKey] = useState(0);
   const [mapInfo, setMapInfo] = useState<MapInfo | null>(null);
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
+  const difficultyRef = useRef<Difficulty | null>(null);
+  useEffect(() => {
+    difficultyRef.current = difficulty;
+  }, [difficulty]);
   const panelOpen = useRef(true);
   useEffect(() => {
     panelOpen.current = panel !== null;
@@ -96,6 +101,7 @@ export default function Campaign() {
             setPanel({ type: "end", result });
           },
         });
+        if (difficultyRef.current) engine.setDifficulty(difficultyRef.current);
         engine.setPaused(panelOpen.current); // stay paused while the prologue is open
         engineRef.current = engine;
         setMapInfo(engine.mapInfo);
@@ -134,7 +140,8 @@ export default function Campaign() {
   const restart = () => {
     setHud(null);
     setPage(0);
-    setPanel({ type: "intro" });
+    // A retry keeps the chosen difficulty and skips the prologue.
+    setPanel(difficultyRef.current ? null : { type: "intro" });
     setRunKey((k) => k + 1);
   };
 
@@ -181,9 +188,29 @@ export default function Campaign() {
       {hud?.bossAggro && (
         <div className="pointer-events-none absolute left-1/2 top-16 w-[min(90vw,28rem)] -translate-x-1/2" role="status">
           <p className="mb-1 text-center font-display font-semibold text-bone">{boss.name}</p>
-          <div className="h-3 overflow-hidden rounded-sm border border-gold-dim bg-stone-deep">
-            <div className="h-full bg-[#c25b4a] transition-[width] duration-100" style={{ width: `${(hud.bossHp / hud.bossMax) * 100}%` }} />
+          <div className={`h-3 overflow-hidden rounded-sm border bg-stone-deep ${hud.stoneSkin ? "border-[#b08ad6]" : "border-gold-dim"}`}>
+            <div
+              className="h-full transition-[width] duration-100"
+              style={{ width: `${(hud.bossHp / hud.bossMax) * 100}%`, background: hud.stoneSkin ? "#8c8a80" : "#c25b4a" }}
+            />
           </div>
+          {hud.stoneSkin && (
+            <p className="mt-1 text-center text-xs text-bone">
+              Stone skin: half damage until the {hud.shards} {hud.shards === 1 ? "shard falls" : "shards fall"}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Boulder warning */}
+      {!panel && hud?.marked && (
+        <div className="warning" role="alert">
+          <span>Boulder incoming on your {UNIT_LABEL[hud.marked.kind]}. Move it out of the purple circle.</span>
+          {hud.marked.kind !== "hero" && (
+            <button type="button" className="btn-stone" onClick={() => e()?.selectUnit(hud.marked!.id)}>
+              Select {UNIT_LABEL[hud.marked.kind]}
+            </button>
+          )}
         </div>
       )}
 
@@ -210,6 +237,7 @@ export default function Campaign() {
           selection={sel}
           warband={hud?.warband ?? []}
           heroHp={hud?.heroHp ?? STATS.hero.hp}
+          markedId={hud?.marked?.id ?? null}
           onSelect={(id, add) => e()?.selectUnit(id, add)}
           onHero={() => e()?.selectHero(true)}
         />
@@ -231,6 +259,11 @@ export default function Campaign() {
           setPage={setPage}
           onClose={closePanel}
           onRestart={restart}
+          onDifficulty={(d) => {
+            engineRef.current?.setDifficulty(d);
+            setDifficulty(d);
+            closePanel();
+          }}
           recruited={recruited}
         />
       )}
@@ -242,12 +275,14 @@ function SelectionPanel({
   selection,
   warband,
   heroHp,
+  markedId,
   onSelect,
   onHero,
 }: {
   selection: UnitInfo[];
   warband: UnitInfo[];
   heroHp: number;
+  markedId: number | null;
   onSelect: (id: number, add: boolean) => void;
   onHero: () => void;
 }) {
@@ -255,7 +290,7 @@ function SelectionPanel({
     const u = selection[0];
     const st = STATS[u.kind];
     return (
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className={`flex min-w-0 flex-1 items-center gap-3 ${u.id === markedId ? "marked-panel" : ""}`}>
         <div className="portrait shrink-0" style={{ borderColor: UNIT_COLOR[u.kind], color: UNIT_COLOR[u.kind] }}>
           {UNIT_LABEL[u.kind][0]}
         </div>
@@ -295,7 +330,7 @@ function SelectionPanel({
                 onClick={(ev) => (isHero ? onHero() : onSelect(u.id, ev.shiftKey))}
                 title={`${UNIT_LABEL[u.kind]}${dead ? " (fallen)" : ""}`}
                 aria-pressed={on}
-                className="unit-slot"
+                className={`unit-slot ${!isHero && u.id === markedId ? "unit-slot-marked" : ""}`}
                 style={{ borderColor: on ? "#7cd16b" : UNIT_COLOR[u.kind], opacity: dead ? 0.35 : 1 }}
               >
                 <span style={{ color: UNIT_COLOR[u.kind] }}>{UNIT_LABEL[u.kind][0]}</span>
@@ -388,6 +423,7 @@ function Dialogue({
   setPage,
   onClose,
   onRestart,
+  onDifficulty,
   recruited,
 }: {
   panel: NonNullable<Panel>;
@@ -395,6 +431,7 @@ function Dialogue({
   setPage: (n: number) => void;
   onClose: () => void;
   onRestart: () => void;
+  onDifficulty: (d: Difficulty) => void;
   recruited: number;
 }) {
   let title = "";
@@ -420,6 +457,17 @@ function Dialogue({
     title = intro.title;
     lines = intro.lines;
     action = "Begin";
+    extra = (
+      <div className="mt-2 space-y-2">
+        <p className="text-xs text-muted">Choose a difficulty. You can&apos;t change it mid-run.</p>
+        {(Object.keys(difficulties) as Difficulty[]).map((d) => (
+          <button key={d} type="button" className="difficulty" onClick={() => onDifficulty(d)} autoFocus={d === "story"}>
+            <span className="font-display font-semibold text-bone">{difficulties[d].label}</span>
+            <span className="text-xs">{difficulties[d].blurb}</span>
+          </button>
+        ))}
+      </div>
+    );
   } else if (panel.type === "shrine") {
     title = panel.shrine.title;
     lines = panel.shrine.lines;
@@ -435,10 +483,10 @@ function Dialogue({
   } else if (panel.type === "boss") {
     title = boss.name;
     lines = [
-      boss.intro,
+      ...boss.intro,
       recruited < 3
         ? `You have ${recruited} of ${shrines.length} recruits. You can retreat south to reset the fight and recruit more.`
-        : "Your warband is ready. Select it all with Ctrl+A, attack-move with A, and use Deploy (Q) and Rally (W). Move Vitaliy out of the red circle.",
+        : "Your warband is ready. Ctrl+A selects everyone, A attack-moves, Q is Deploy and W is Rally.",
     ];
     action = "Fight";
   } else {
@@ -478,7 +526,7 @@ function Dialogue({
                   <button type="button" onClick={onRestart} className="btn-gold" autoFocus>Try again</button>
                 </>
               )
-            ) : (
+            ) : panel.type === "intro" && last ? null : (
               <button type="button" className="btn-gold" autoFocus onClick={() => (last ? onClose() : setPage(page + 1))}>
                 {last ? action : "Next"}
               </button>

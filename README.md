@@ -30,13 +30,20 @@ Personal site of Vitaliy Pikalo, plus a short strategy game that tells the same 
 | Arrows, screen edge, middle-drag, touch drag | Move the camera |
 | Minimap | Click to look, right-click to send units |
 
+### The Final Round
+
+- **Slam:** a red circle fills under the giant. Recruits step out; you move Vitaliy.
+- **Boulder** (below 85% health): a purple circle marks a backline unit, healer first. That unit doesn't dodge on its own: select it and move it.
+- **Stone shards** (at 55% and 25%): adds that hunt the healer and ranged units. The giant takes half damage while any shard lives.
+- **Difficulty:** Story is meant to be won by selecting everyone and attacking; Veteran needs the micro above. Tuning lives in `DIFF` in `lib/game/engine.ts`.
+
 Left-clicking the ground moves units (WC3 only uses right-click) so first-time players can play without knowing RTS controls.
 
 ## Editing content
 
 - Site copy: `lib/content.ts`. Every experience entry needs a `period` (dates).
 - Game story: `lib/game/story.ts` (shrine chapters, recruits, boss text).
-- Game balance: unit stats in `lib/game/units.ts`; `BOSS`, `DEPLOY`, and `RALLY` at the top of `lib/game/engine.ts`.
+- Game balance: unit stats in `lib/game/units.ts`; `BOSS`, `DIFF`, `SHARD`, `DEPLOY`, and `RALLY` at the top of `lib/game/engine.ts`.
 - Resume: replace `public/Vitaliy_Pikalo_resume.pdf`.
 
 ## Project structure
@@ -70,7 +77,7 @@ npm run build
 npm run typecheck
 ```
 
-Append `?debug=1` to `/play` to expose the engine as `window.__campaign` for automated playtests (`debugMoveTo(x, z)`, `debugState()`, `debugProject(x, y, z)`, `debugUnitsInObstacles()`).
+Append `?debug=1` to `/play` to expose the engine as `window.__campaign` for automated playtests (`debugMoveTo(x, z)`, `debugState()`, `debugProject(x, y, z)`, `debugUnitsInObstacles()`, `debugSkipToBoss()`, `debugAttack(kinds, target)`, `debugMoveKinds(kinds, x, z)`).
 
 ## Credits
 
