@@ -15,6 +15,18 @@ function mesh(geo: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0)
   return o;
 }
 
+/** Only parts big enough to matter cast shadows; tiny details would just add draw calls. */
+function trimShadows(root: THREE.Object3D, minSize: number) {
+  const box = new THREE.Box3();
+  const size = new THREE.Vector3();
+  root.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    o.geometry.computeBoundingBox();
+    box.copy(o.geometry.boundingBox!).getSize(size);
+    o.castShadow = Math.max(size.x, size.y, size.z) >= minSize;
+  });
+}
+
 /* ------------------------------------------------------------------ units */
 
 export type UnitRig = {
@@ -177,6 +189,7 @@ export function buildUnit(kind: UnitKind): UnitRig {
   }
 
   root.scale.setScalar(st.scale);
+  trimShadows(root, 0.45);
   return { root, body: bodyG, legL, legR, torso, head, armL, armR, cape };
 }
 
@@ -332,6 +345,7 @@ export function buildGiant(): GiantRig {
   const armR = arm(1);
 
   root.scale.setScalar(1.25);
+  trimShadows(root, 0.5);
   return { root, body, legL, legR, torso, head, armL, armR, glow: [glowA, glowEye], stone };
 }
 
