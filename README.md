@@ -34,7 +34,7 @@ Left-clicking the ground moves units (WC3 only uses right-click) so first-time p
 
 ## Editing content
 
-- Site copy: `lib/content.ts`. Experience entries take an optional `period` for dates.
+- Site copy: `lib/content.ts`. Every experience entry needs a `period` (dates).
 - Game story: `lib/game/story.ts` (shrine chapters, recruits, boss text).
 - Game balance: unit stats in `lib/game/units.ts`; `BOSS`, `DEPLOY`, and `RALLY` at the top of `lib/game/engine.ts`.
 - Resume: replace `public/Vitaliy_Pikalo_resume.pdf`.
