@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { NavGrid, type Point } from "./nav";
-import { boss as bossDef, shrines, type Shrine, type UnitKind } from "./story";
+import { abilities, boss as bossDef, shrines, type AbilityId, type Shrine, type UnitKind } from "./story";
 import { STATS } from "./units";
 
 /* ------------------------------------------------------------------ types */
@@ -31,8 +31,9 @@ export type HudState = {
   shards: number;
   marked: { id: number; kind: UnitKind } | null; // unit targeted by an incoming boulder
   difficulty: Difficulty;
-  deployCd: number;
-  rallyCd: number;
+  abilities: Record<AbilityId, { cd: number; max: number; unlocked: boolean }>;
+  kellyLeft: number; // seconds left on the damage buff
+  fallen: number; // recruits the Medical Drone can bring back
   status: Status;
   pendingAttackMove: boolean;
   followCamera: boolean;
@@ -50,17 +51,21 @@ export type EngineCallbacks = {
 };
 
 const BOSS = { dmg: 44, cd: 1.6, radius: 1.7, speed: 3.4, slamEvery: 6.5, slamWindup: 1.7, slamRadius: 5.5, slamDmg: 130 };
-const DEPLOY = { cd: 8, radius: 5, dmg: 150 };
+const ABILITY = {
+  drone: { cd: 20, heal: 0.3, revive: 0.5 },
+  checkmate: { cd: 10, dmg: 170, stun: 1.6, range: 14 },
+  kelly: { cd: 20, duration: 6, mult: 1.5 },
+};
 const SHARD = { cd: 1.2, speed: 3.8, radius: 0.7 };
-const BOULDER = { radius: 2.4, from: 0.85 }; // starts below 85% boss health
+// Starts below 85% boss health. The zone fills red for `fill` seconds, then the boulder flies for `flight`.
+const BOULDER = { radius: 1.8, from: 0.85, fill: 3, flight: 0.45 };
 const WAVES = [0.55, 0.25]; // boss health fractions that summon shards
 const STONE_SKIN = 0.5; // damage multiplier on the giant while shards live
 // Per-difficulty tuning. Story is meant to be won by selecting everyone and attacking.
 const DIFF = {
-  story: { bossHp: 2600, incoming: 0.6, boulderEvery: 13, boulderWindup: 2.8, boulderDmg: 170, shardHp: 130, shardDmg: 16, waves: [3, 2] },
-  veteran: { bossHp: 3200, incoming: 1.3, boulderEvery: 7, boulderWindup: 2.2, boulderDmg: 230, shardHp: 170, shardDmg: 24, waves: [5, 4] },
+  story: { bossHp: 2600, incoming: 0.6, boulderEvery: 12, boulderDmg: 170, shardHp: 130, shardDmg: 16, waves: [3, 2] },
+  veteran: { bossHp: 3200, incoming: 1.2, boulderEvery: 9, boulderDmg: 230, shardHp: 170, shardDmg: 24, waves: [5, 4] },
 };
-const RALLY = { cd: 15, frac: 0.35 };
 const MAP = 40;
 const ACQUIRE = 9; // idle units engage the boss inside this distance
 const UNIT_RADIUS = 0.45;
@@ -85,7 +90,8 @@ type Unit = {
 
 type Shard = { id: number; group: THREE.Group; hp: number; max: number; atk: number; hpBar: THREE.Group; hpFill: THREE.Mesh };
 type Target = "boss" | Shard;
-type Boulder = { target: Unit; at: THREE.Vector3; from: THREE.Vector3; t: number; windup: number; ring: THREE.Mesh; fill: THREE.Mesh; rock: THREE.Mesh };
+type Boulder = { target: Unit; at: THREE.Vector3; from: THREE.Vector3; t: number; ring: THREE.Mesh; fill: THREE.Mesh; rock: THREE.Mesh };
+type Fade = { obj: THREE.Object3D; age: number; life: number; from?: THREE.Vector3; to?: THREE.Vector3 };
 type Projectile = { mesh: THREE.Mesh; target: Target; dmg: number; crit: boolean; speed: number };
 type Fx = { mesh: THREE.Mesh; age: number; life: number; grow: number };
 type Floater = { el: HTMLDivElement; pos: THREE.Vector3; age: number };
@@ -167,8 +173,11 @@ export class GameEngine {
   private floaters: Floater[] = [];
   private marker: THREE.Mesh;
 
-  private deployCd = 0;
-  private rallyCd = 0;
+  private cds: Record<AbilityId, number> = { drone: 0, checkmate: 0, kelly: 0 };
+  private kellyLeft = 0;
+  private bossStun = 0;
+  private fallen: Unit[] = [];
+  private fades: Fade[] = [];
   private paused = false;
   private status: Status = "explore";
   private hudTimer = 0;
@@ -273,30 +282,59 @@ export class GameEngine {
     this.emitHud();
   }
 
-  deploy() {
-    if (this.deployCd > 0 || this.over() || this.paused || this.hero.hp <= 0) return;
-    this.deployCd = DEPLOY.cd;
-    const p = this.hero.group.position;
-    this.ring(p, "#e3c06a", DEPLOY.radius, 0.6);
-    if (this.bossAggro && !this.bossDead && distXZ(p, this.bossGroup.position) <= DEPLOY.radius + BOSS.radius) {
-      this.hitBoss(DEPLOY.dmg, true);
-    }
-    for (const sh of [...this.shards]) {
-      if (distXZ(p, sh.group.position) <= DEPLOY.radius + SHARD.radius) this.hitShard(sh, DEPLOY.dmg, true);
-    }
-    this.emitHud();
+  isUnlocked(a: AbilityId) {
+    return this.visited.has(abilities[a].unlock);
   }
 
-  rally() {
-    if (this.rallyCd > 0 || this.over() || this.paused || this.hero.hp <= 0) return;
-    this.rallyCd = RALLY.cd;
-    for (const u of this.party()) {
-      const amt = Math.round(u.max * RALLY.frac);
-      u.hp = Math.min(u.max, u.hp + amt);
-      this.ring(u.group.position, "#7e9a63", 1.6, 0.6);
-      this.float(u.group.position, `+${amt}`, "heal");
+  /** Casts one of Vitaliy's abilities. Returns false if it couldn't be cast. */
+  cast(a: AbilityId) {
+    if (this.over() || this.paused || this.hero.hp <= 0 || !this.isUnlocked(a) || this.cds[a] > 0) return false;
+    const hp = this.hero.group.position;
+    if (a === "drone") {
+      const revived = this.fallen.pop();
+      if (revived) {
+        const at = this.nav.nearestOpen({ x: hp.x + 1.6, z: hp.z + 1.6 });
+        revived.hp = Math.round(revived.max * ABILITY.drone.revive);
+        revived.group.position.set(at.x, 0, at.z);
+        revived.order = "follow";
+        revived.path = [];
+        revived.target = null;
+        revived.ring.visible = false;
+        this.scene.add(revived.group);
+        this.ring(revived.group.position, "#9cd67e", 2.2, 0.8);
+        this.float(revived.group.position, "Revived", "heal");
+      }
+      for (const u of this.party()) {
+        const amt = Math.min(u.max - u.hp, Math.round(u.max * ABILITY.drone.heal));
+        u.hp += amt;
+        if (amt > 0) this.float(u.group.position, `+${amt}`, "heal");
+        this.ring(u.group.position, "#9cd67e", 1.4, 0.5);
+      }
+      this.flyDrone(hp, revived ? revived.group.position : hp);
+    } else if (a === "checkmate") {
+      const t = this.nearestEnemy(hp, ABILITY.checkmate.range);
+      if (!t) return false;
+      const tp = this.targetPos(t).clone();
+      this.beam(tp);
+      this.hitTarget(t, ABILITY.checkmate.dmg * this.dmgMult(), true);
+      if (t === "boss" && !this.bossDead) {
+        this.bossStun = ABILITY.checkmate.stun;
+        if (this.telegraph) this.clearTelegraph();
+        this.bossSlam = Math.max(this.bossSlam, 3);
+        this.float(tp.clone().setY(5.5), "Checkmate", "crit");
+      }
+    } else {
+      this.kellyLeft = ABILITY.kelly.duration;
+      for (const u of this.party()) this.ring(u.group.position, "#e3c06a", 1.6, 0.6);
+      this.float(hp.clone().setY(3), "Kelly bet: 1.5x", "crit");
     }
+    this.cds[a] = ABILITY[a].cd;
     this.emitHud();
+    return true;
+  }
+
+  private dmgMult() {
+    return this.kellyLeft > 0 ? ABILITY.kelly.mult : 1;
   }
 
   /** Commands for the HUD's command card. */
@@ -576,10 +614,13 @@ export class GameEngine {
 
     switch (k) {
       case "q":
-        this.deploy();
+        this.cast("drone");
         break;
       case "w":
-        this.rally();
+        this.cast("checkmate");
+        break;
+      case "e":
+        this.cast("kelly");
         break;
       case "a":
         this.command("attackMove");
@@ -1065,8 +1106,9 @@ export class GameEngine {
       return;
     }
 
-    this.deployCd = Math.max(0, this.deployCd - dt);
-    this.rallyCd = Math.max(0, this.rallyCd - dt);
+    for (const a of Object.keys(this.cds) as AbilityId[]) this.cds[a] = Math.max(0, this.cds[a] - dt);
+    this.kellyLeft = Math.max(0, this.kellyLeft - dt);
+    this.updateFades(dt);
 
     if (this.checkShrines()) return;
     for (const u of this.party()) this.updateUnit(u, dt);
@@ -1245,9 +1287,9 @@ export class GameEngine {
         u.atk = st.cd;
         if (st.ranged) {
           const crit = !!st.crit && Math.random() < st.crit;
-          this.shoot(u.group.position, tgt, st.dmg * (crit ? 2 : 1), crit, st.trim);
+          this.shoot(u.group.position, tgt, st.dmg * this.dmgMult() * (crit ? 2 : 1), crit, st.trim);
         } else {
-          this.hitTarget(tgt, st.dmg, false);
+          this.hitTarget(tgt, st.dmg * this.dmgMult(), false);
         }
       }
       return;
@@ -1339,6 +1381,7 @@ export class GameEngine {
       [...this.shards].forEach((sh) => this.removeShard(sh));
       this.wavesDone = 0;
       this.boulderTimer = 4;
+      this.bossStun = 0;
       this.bossGroup.position.copy(home);
       this.emitHud();
       return;
@@ -1347,6 +1390,12 @@ export class GameEngine {
     const bp = this.bossGroup.position;
     this.updateShards(dt);
     this.updateBoulder(dt);
+
+    if (this.bossStun > 0) {
+      this.bossStun -= dt;
+      this.bossGroup.rotation.z = this.bossStun > 0 ? Math.sin(this.bossStun * 40) * 0.04 : 0;
+      return;
+    }
 
     if (this.telegraph) {
       this.telegraph.t += dt;
@@ -1380,7 +1429,7 @@ export class GameEngine {
       return;
     }
 
-    const tank = party.find((u) => u.kind === "engineer" && distXZ(u.group.position, bp) < 6);
+    const tank = party.find((u) => u.kind === "engineer" && distXZ(u.group.position, bp) < 8);
     const target = tank ?? [...party].sort((a, b) => distXZ(a.group.position, bp) - distXZ(b.group.position, bp))[0];
     if (!target) return;
     const d = distXZ(target.group.position, bp);
@@ -1489,12 +1538,12 @@ export class GameEngine {
     if (target.hp <= 0) return;
     const at = target.group.position.clone().setY(0);
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(BOULDER.radius - 0.2, BOULDER.radius, 40),
-      new THREE.MeshBasicMaterial({ color: "#b08ad6", transparent: true, opacity: 0.95, depthWrite: false }),
+      new THREE.RingGeometry(BOULDER.radius - 0.18, BOULDER.radius, 40),
+      new THREE.MeshBasicMaterial({ color: "#e0503c", transparent: true, opacity: 0.95, depthWrite: false }),
     );
     const fill = new THREE.Mesh(
       new THREE.CircleGeometry(BOULDER.radius, 40),
-      new THREE.MeshBasicMaterial({ color: "#b08ad6", transparent: true, opacity: 0.3, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: "#e0503c", transparent: true, opacity: 0.25, depthWrite: false }),
     );
     [ring, fill].forEach((m) => {
       m.rotation.x = -Math.PI / 2;
@@ -1506,8 +1555,9 @@ export class GameEngine {
     rock.castShadow = true;
     const from = this.bossGroup.position.clone().setY(5.5);
     rock.position.copy(from);
+    rock.visible = false; // thrown only once the zone is full
     this.scene.add(rock);
-    this.boulder = { target, at, from, t: 0, windup: DIFF[this.diff].boulderWindup, ring, fill, rock };
+    this.boulder = { target, at, from, t: 0, ring, fill, rock };
     this.emitHud();
   }
 
@@ -1515,17 +1565,23 @@ export class GameEngine {
     const b = this.boulder;
     if (!b) return;
     b.t += dt;
-    const k = Math.min(1, b.t / b.windup);
-    b.fill.scale.setScalar(Math.max(0.01, k));
-    // Arc from the giant's hand to the marked spot.
+    // Phase 1: the zone fills solid red over 3 seconds.
+    const fill = Math.min(1, b.t / BOULDER.fill);
+    b.fill.scale.setScalar(Math.max(0.01, fill));
+    (b.fill.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.45 * fill;
+    if (fill < 1) return;
+    // Phase 2: the boulder flies from the giant's hand to the zone.
+    b.from.copy(this.bossGroup.position).setY(5.5);
+    b.rock.visible = true;
+    const k = Math.min(1, (b.t - BOULDER.fill) / BOULDER.flight);
     b.rock.position.lerpVectors(b.from, b.at.clone().setY(0.6), k);
-    b.rock.position.y += Math.sin(k * Math.PI) * 6;
-    b.rock.rotation.x += dt * 4;
+    b.rock.position.y += Math.sin(k * Math.PI) * 4;
+    b.rock.rotation.x += dt * 6;
     if (k < 1) return;
     for (const u of this.party()) {
       if (distXZ(u.group.position, b.at) <= BOULDER.radius) this.damage(u, DIFF[this.diff].boulderDmg);
     }
-    this.ring(b.at, "#b08ad6", BOULDER.radius + 1, 0.5);
+    this.ring(b.at, "#e0503c", BOULDER.radius + 1, 0.5);
     this.clearBoulder();
   }
 
@@ -1539,6 +1595,68 @@ export class GameEngine {
     }
     this.boulder = null;
     this.emitHud();
+  }
+
+  /** A small quadcopter that flies from Vitaliy to the drop point and fades out. */
+  private flyDrone(from: THREE.Vector3, to: THREE.Vector3) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.5), flat("#d8d8d8"));
+    g.add(body);
+    for (const [x, z] of [[-0.35, -0.35], [0.35, -0.35], [-0.35, 0.35], [0.35, 0.35]]) {
+      const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.03, 10), flat("#9cd67e", { emissive: "#9cd67e", emissiveIntensity: 0.6 }));
+      rotor.position.set(x, 0.1, z);
+      g.add(rotor);
+    }
+    const cross = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.02, 0.06), flat("#e0503c"));
+    cross.position.y = 0.09;
+    const cross2 = cross.clone();
+    cross2.rotation.y = Math.PI / 2;
+    g.add(cross, cross2);
+    g.position.copy(from).setY(3.5);
+    this.scene.add(g);
+    this.fades.push({ obj: g, age: 0, life: 1.4, from: from.clone().setY(3.5), to: to.clone().setY(2.4) });
+  }
+
+  /** A gold strike from the sky onto a target. */
+  private beam(at: THREE.Vector3) {
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.25, 0.4, 14, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: "#e3c06a", transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    mesh.position.set(at.x, 7, at.z);
+    this.scene.add(mesh);
+    this.fades.push({ obj: mesh, age: 0, life: 0.45 });
+    this.ring(at, "#e3c06a", 2.4, 0.5);
+  }
+
+  private updateFades(dt: number) {
+    this.fades = this.fades.filter((f) => {
+      f.age += dt;
+      const k = Math.min(1, f.age / f.life);
+      if (f.from && f.to) {
+        f.obj.position.lerpVectors(f.from, f.to, Math.min(1, k * 1.8));
+        f.obj.position.y += Math.sin(f.age * 9) * 0.06;
+        f.obj.rotation.y += dt * 2;
+      }
+      f.obj.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          const m = o.material as THREE.MeshBasicMaterial;
+          m.transparent = true;
+          m.opacity = k > 0.6 ? 1 - (k - 0.6) / 0.4 : m.opacity;
+        }
+      });
+      if (k >= 1) {
+        this.scene.remove(f.obj);
+        f.obj.traverse((o) => {
+          if (o instanceof THREE.Mesh) {
+            o.geometry.dispose();
+            (o.material as THREE.Material).dispose();
+          }
+        });
+        return false;
+      }
+      return true;
+    });
   }
 
   private startTelegraph(at: THREE.Vector3) {
@@ -1582,7 +1700,9 @@ export class GameEngine {
       u.hp = 0;
       this.scene.remove(u.group);
       this.selected.delete(u);
+      u.ring.visible = false;
       if (u === this.hero) this.finish("lost");
+      else this.fallen.push(u);
       this.emitHud();
     }
   }
@@ -1836,8 +1956,13 @@ export class GameEngine {
       shards: this.shards.length,
       marked: this.boulder && this.boulder.target.hp > 0 ? { id: this.boulder.target.id, kind: this.boulder.target.kind } : null,
       difficulty: this.diff,
-      deployCd: this.deployCd,
-      rallyCd: this.rallyCd,
+      abilities: {
+        drone: { cd: this.cds.drone, max: ABILITY.drone.cd, unlocked: this.isUnlocked("drone") },
+        checkmate: { cd: this.cds.checkmate, max: ABILITY.checkmate.cd, unlocked: this.isUnlocked("checkmate") },
+        kelly: { cd: this.cds.kelly, max: ABILITY.kelly.cd, unlocked: this.isUnlocked("kelly") },
+      },
+      kellyLeft: this.kellyLeft,
+      fallen: this.fallen.length,
       status: this.status,
       pendingAttackMove: this.pendingAttackMove,
       followCamera: this.followCam,

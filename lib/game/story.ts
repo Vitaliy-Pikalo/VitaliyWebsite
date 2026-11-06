@@ -1,6 +1,32 @@
 // Campaign script. Each shrine tells one part of Vitaliy's story and grants one unit.
 
 export type UnitKind = "hero" | "engineer" | "strategist" | "quant" | "banner" | "builder";
+export type AbilityId = "drone" | "checkmate" | "kelly";
+
+// Vitaliy's abilities, each taken from a project. Each one unlocks at a shrine.
+export const abilities: Record<AbilityId, { name: string; hotkey: string; source: string; blurb: string; unlock: string }> = {
+  drone: {
+    name: "Medical Drone",
+    hotkey: "Q",
+    source: "CMU Project Ignite",
+    blurb: "Revives the last fallen recruit at half health and heals the whole warband.",
+    unlock: "academy",
+  },
+  checkmate: {
+    name: "Checkmate",
+    hotkey: "W",
+    source: "Chess960-NN",
+    blurb: "A heavy strike on the nearest enemy. Stuns the giant and cancels a slam.",
+    unlock: "forge",
+  },
+  kelly: {
+    name: "Kelly Bet",
+    hotkey: "E",
+    source: "Kalshi trading bot",
+    blurb: "Size the bet: the whole warband deals 50% more damage for 6 seconds.",
+    unlock: "market",
+  },
+};
 
 export type Shrine = {
   id: string;
@@ -19,7 +45,7 @@ export const intro = {
   lines: [
     "I fell in love with Warcraft III: The Frozen Throne because of my parents.",
     "I loved how simple it looked and how much depth the fights had. Every unit had a job, and knowing when to use each one won the battle.",
-    "This is that idea, told through my own story. Walk to each glowing shrine to hear a chapter and recruit someone to your warband. When you're ready, face the Final Round in the north.",
+    "This is that idea, told through my own story. Walk to each glowing shrine to hear a chapter, recruit someone to your warband, and unlock one of my abilities. When you're ready, face the Final Round in the north.",
   ],
 };
 
@@ -30,6 +56,7 @@ export const shrines: Shrine[] = [
     lines: [
       "I study computer engineering at Penn State. I started at Behrend in Erie and transferred to University Park, graduating in May 2028.",
       "Circuits, digital systems, data structures, quantum waves. The coursework is the foundation everything else stands on.",
+      "Before college, at Carnegie Mellon's Project Ignite, I led 12 students building a search-and-rescue medical drone that spots people with computer vision and drops first-aid kits.",
     ],
     recruit: "engineer",
     recruitName: "Engineer",
@@ -96,8 +123,9 @@ export const boss = {
   arena: [0, -30] as [number, number],
   intro: [
     "A stone giant guards the scroll that holds my resume. When a red circle fills under it, it slams. Your recruits step out on their own, but you have to move Vitaliy.",
-    "Once it's hurt, it hurls boulders at your backline. A purple circle marks the target: select that unit and move it out.",
+    "Once it's hurt, it marks a small red zone under one of your backline units. The zone fills over 3 seconds, then a boulder lands there. Select that unit and step it out.",
     "At half health it calls stone shards that hunt your healer and ranged units. While any shard lives, the giant takes half damage. Send your fighters to break them.",
+    "Vitaliy fights on his own. Use his abilities: Medical Drone (Q) to revive and heal, Checkmate (W) to stun the giant out of a slam, Kelly Bet (E) when you want to burst it down.",
   ],
 };
 

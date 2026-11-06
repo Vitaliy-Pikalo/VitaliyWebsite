@@ -16,7 +16,7 @@ export type Stats = {
   crit?: number;
 };
 export const STATS: Record<UnitKind, Stats> = {
-  hero: { hp: 420, dmg: 20, cd: 1.0, range: 1.6, speed: 6.2, body: "#2f4f8f", trim: "#c9a24a", scale: 1.15 },
+  hero: { hp: 560, dmg: 20, cd: 1.0, range: 1.6, speed: 6.2, body: "#2f4f8f", trim: "#c9a24a", scale: 1.15 },
   engineer: { hp: 540, dmg: 14, cd: 1.0, range: 1.5, speed: 5.4, body: "#5d6b4a", trim: "#7e9a63", scale: 1.1 },
   strategist: { hp: 230, dmg: 34, cd: 1.9, range: 7, speed: 5.0, body: "#3b5a86", trim: "#8fb3e0", scale: 0.95, ranged: true },
   quant: { hp: 210, dmg: 11, cd: 0.55, range: 7.5, speed: 5.8, body: "#6b5a2e", trim: "#e3c06a", scale: 0.95, ranged: true, crit: 0.25 },

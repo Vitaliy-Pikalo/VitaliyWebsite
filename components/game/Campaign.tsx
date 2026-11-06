@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Difficulty, GameEngine, HudState, MapInfo, UnitInfo } from "@/lib/game/engine";
-import { boss, defeat, difficulties, intro, shrines, victory, type Shrine, type UnitKind } from "@/lib/game/story";
+import { abilities, boss, defeat, difficulties, intro, shrines, victory, type AbilityId, type Shrine, type UnitKind } from "@/lib/game/story";
 import { STATS } from "@/lib/game/units";
 import Minimap from "./Minimap";
 
@@ -28,7 +28,7 @@ const UNIT_COLOR: Record<UnitKind, string> = {
 };
 
 const UNIT_ROLE: Record<UnitKind, string> = {
-  hero: "Your hero. If Vitaliy falls, the campaign is lost. Deploy (Q) hits everything nearby; Rally (W) heals the warband.",
+  hero: "Your hero. He fights on his own; you use his abilities. If Vitaliy falls, the campaign is lost.",
   ...Object.fromEntries(shrines.map((s) => [s.recruit, s.recruitBlurb])),
 } as Record<UnitKind, string>;
 
@@ -205,7 +205,7 @@ export default function Campaign() {
       {/* Boulder warning */}
       {!panel && hud?.marked && (
         <div className="warning" role="alert">
-          <span>Boulder incoming on your {UNIT_LABEL[hud.marked.kind]}. Move it out of the purple circle.</span>
+          <span>Boulder incoming on your {UNIT_LABEL[hud.marked.kind]}. Move it out of the red zone before it fills.</span>
           {hud.marked.kind !== "hero" && (
             <button type="button" className="btn-stone" onClick={() => e()?.selectUnit(hud.marked!.id)}>
               Select {UNIT_LABEL[hud.marked.kind]}
@@ -247,8 +247,27 @@ export default function Campaign() {
           <CommandButton label="Stop" hotkey="S" disabled={!sel.length} onUse={() => e()?.command("stop")} hint="Stop and stand by" />
           <CommandButton label="Hold" hotkey="H" disabled={!sel.length} onUse={() => e()?.command("hold")} hint="Hold position: fight only what is in range" />
           <CommandButton label="Army" hotkey="`" onUse={() => e()?.selectAll()} hint="Select the whole warband" />
-          <CommandButton label="Deploy" hotkey="Q" cd={hud?.deployCd ?? 0} max={8} onUse={() => e()?.deploy()} hint="Shockwave around Vitaliy" />
-          <CommandButton label="Rally" hotkey="W" cd={hud?.rallyCd ?? 0} max={15} onUse={() => e()?.rally()} hint="Heal the whole warband" />
+          {(Object.keys(abilities) as AbilityId[]).map((a) => {
+            const info = abilities[a];
+            const st = hud?.abilities[a];
+            const lockedAt = shrines.find((s) => s.id === info.unlock)?.title;
+            const badge = a === "drone" && hud?.fallen ? `${hud.fallen}` : a === "kelly" && hud?.kellyLeft ? `${Math.ceil(hud.kellyLeft)}s` : undefined;
+            return (
+              <CommandButton
+                key={a}
+                label={info.name}
+                hotkey={info.hotkey}
+                cd={st?.cd ?? 0}
+                max={st?.max ?? 1}
+                locked={!st?.unlocked}
+                active={a === "kelly" && !!hud?.kellyLeft}
+                badge={badge}
+                onUse={() => e()?.cast(a)}
+                hint={st?.unlocked ? `${info.blurb} From ${info.source}.` : `Unlocks at ${lockedAt}.`}
+                ability
+              />
+            );
+          })}
         </div>
       </div>
 
@@ -369,6 +388,9 @@ function CommandButton({
   max = 1,
   active = false,
   disabled = false,
+  locked = false,
+  badge,
+  ability = false,
 }: {
   label: string;
   hotkey: string;
@@ -378,20 +400,24 @@ function CommandButton({
   max?: number;
   active?: boolean;
   disabled?: boolean;
+  locked?: boolean;
+  badge?: string;
+  ability?: boolean;
 }) {
-  const cooling = cd > 0;
+  const cooling = cd > 0 && !locked;
   return (
     <button
       type="button"
       onClick={onUse}
-      disabled={disabled || cooling}
+      disabled={disabled || cooling || locked}
       title={`${hint} (${hotkey})`}
       aria-label={`${label} (${hotkey}): ${hint}${cooling ? `, ready in ${Math.ceil(cd)} seconds` : ""}`}
       aria-pressed={active || undefined}
-      className={`ability ${active ? "ability-active" : ""}`}
+      className={`ability ${ability ? "ability-hero" : ""} ${active ? (ability ? "ability-buff" : "ability-active") : ""} ${locked ? "ability-locked" : ""}`}
     >
-      <span className="text-xs font-semibold text-bone">{label}</span>
+      <span className="px-0.5 text-center text-[11px] font-semibold leading-tight text-bone">{locked ? "Locked" : label}</span>
       <span className="text-[10px] text-muted">{hotkey}</span>
+      {badge && <span className="ability-badge">{badge}</span>}
       {cooling && (
         <span className="absolute inset-0 flex items-center justify-center bg-stone-deep/70 text-base font-semibold text-bone">
           <span className="absolute inset-x-0 bottom-0 bg-gold/25" style={{ height: `${(cd / max) * 100}%` }} />
@@ -409,7 +435,7 @@ const CONTROLS: [string, string][] = [
   ["Click the giant", "Attack it"],
   ["A, then click", "Attack-move"],
   ["S / H", "Stop / hold position"],
-  ["Q / W", "Deploy / Rally"],
+  ["Q / W / E", "Medical Drone / Checkmate / Kelly Bet"],
   ["Ctrl+1–9, then 1–9", "Save and recall a group (double-tap to center)"],
   ["Ctrl+A or `", "Select the whole warband"],
   ["F1 / Space", "Select Vitaliy / center the camera"],
@@ -478,6 +504,13 @@ function Dialogue({
           {panel.shrine.recruitName}:
         </span>{" "}
         {panel.shrine.recruitBlurb}
+        {(Object.keys(abilities) as AbilityId[])
+          .filter((a) => abilities[a].unlock === panel.shrine.id)
+          .map((a) => (
+            <span key={a} className="mt-2 block">
+              <span className="font-semibold text-gold-bright">New ability: {abilities[a].name} ({abilities[a].hotkey}).</span> {abilities[a].blurb}
+            </span>
+          ))}
       </p>
     );
   } else if (panel.type === "boss") {
@@ -486,7 +519,7 @@ function Dialogue({
       ...boss.intro,
       recruited < 3
         ? `You have ${recruited} of ${shrines.length} recruits. You can retreat south to reset the fight and recruit more.`
-        : "Your warband is ready. Ctrl+A selects everyone, A attack-moves, Q is Deploy and W is Rally.",
+        : "Your warband is ready. Ctrl+A selects everyone and A attack-moves.",
     ];
     action = "Fight";
   } else {

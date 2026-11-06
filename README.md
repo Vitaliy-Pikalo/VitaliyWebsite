@@ -23,7 +23,7 @@ Personal site of Vitaliy Pikalo, plus a short strategy game that tells the same 
 | Click the giant | Attack it |
 | A, then click | Attack-move |
 | S / H | Stop / hold position |
-| Q / W | Deploy / Rally (hero abilities) |
+| Q / W / E | Medical Drone / Checkmate / Kelly Bet (hero abilities) |
 | Ctrl+1–9, then 1–9 | Save and recall control groups (double-tap to center) |
 | Ctrl+A or \` | Select the whole warband |
 | F1 / Space | Select the hero / center the camera |
@@ -33,17 +33,27 @@ Personal site of Vitaliy Pikalo, plus a short strategy game that tells the same 
 ### The Final Round
 
 - **Slam:** a red circle fills under the giant. Recruits step out; you move Vitaliy.
-- **Boulder** (below 85% health): a purple circle marks a backline unit, healer first. That unit doesn't dodge on its own: select it and move it.
+- **Boulder** (below 85% health): a small red zone appears under a backline unit, healer first, and fills over 3 seconds; then the boulder lands there. That unit doesn't dodge on its own: select it and step it out.
 - **Stone shards** (at 55% and 25%): adds that hunt the healer and ranged units. The giant takes half damage while any shard lives.
-- **Difficulty:** Story is meant to be won by selecting everyone and attacking; Veteran needs the micro above. Tuning lives in `DIFF` in `lib/game/engine.ts`.
+- **Difficulty:** Story is meant to be won by selecting everyone and attacking; Veteran punishes ignoring the mechanics. Tuning lives in `DIFF` in `lib/game/engine.ts`.
+
+### Vitaliy's abilities
+
+Vitaliy auto-attacks; the player only presses abilities. Each comes from a project and unlocks at that chapter's shrine.
+
+| Key | Ability | From | Effect | Unlocks at |
+|---|---|---|---|---|
+| Q | Medical Drone | CMU Project Ignite | Revives the last fallen recruit at half health, heals everyone 30% (20 s) | The Academy |
+| W | Checkmate | Chess960-NN | 170 damage to the nearest enemy; stuns the giant 1.6 s and cancels a slam (10 s) | The Chess Forge |
+| E | Kelly Bet | Kalshi bot | Warband deals 1.5x damage for 6 s (20 s) | The Market Watch |
 
 Left-clicking the ground moves units (WC3 only uses right-click) so first-time players can play without knowing RTS controls.
 
 ## Editing content
 
 - Site copy: `lib/content.ts`. Every experience entry needs a `period` (dates).
-- Game story: `lib/game/story.ts` (shrine chapters, recruits, boss text).
-- Game balance: unit stats in `lib/game/units.ts`; `BOSS`, `DIFF`, `SHARD`, `DEPLOY`, and `RALLY` at the top of `lib/game/engine.ts`.
+- Game story: `lib/game/story.ts` (shrine chapters, recruits, abilities, boss text).
+- Game balance: unit stats in `lib/game/units.ts`; `BOSS`, `DIFF`, `SHARD`, `BOULDER`, and `ABILITY` at the top of `lib/game/engine.ts`.
 - Resume: replace `public/Vitaliy_Pikalo_resume.pdf`.
 
 ## Project structure
