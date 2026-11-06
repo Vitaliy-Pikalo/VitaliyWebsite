@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { NavGrid, type Point } from "./nav";
 import { abilities, boss as bossDef, shrines, type AbilityId, type Shrine, type UnitKind } from "./story";
 import { STATS } from "./units";
@@ -138,6 +139,7 @@ export class GameEngine {
   private mouse: { x: number; y: number; inside: boolean } = { x: 0, y: 0, inside: false };
 
   private nav = new NavGrid(MAP + 4, 1);
+  private heightGrid = { segs: 2, size: 1, data: new Float32Array(4) };
   private roadPts: THREE.Vector3[] = [];
   private nextId = 1;
 
@@ -193,9 +195,11 @@ export class GameEngine {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
 
     this.scene.background = new THREE.Color("#161b26");
-    this.scene.fog = new THREE.Fog("#161b26", 55, 95);
+    this.scene.fog = new THREE.Fog("#161b26", 60, 110);
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
 
@@ -295,7 +299,7 @@ export class GameEngine {
       if (revived) {
         const at = this.nav.nearestOpen({ x: hp.x + 1.6, z: hp.z + 1.6 });
         revived.hp = Math.round(revived.max * ABILITY.drone.revive);
-        revived.group.position.set(at.x, 0, at.z);
+        revived.group.position.set(at.x, this.groundY(at.x, at.z), at.z);
         revived.order = "follow";
         revived.path = [];
         revived.target = null;
@@ -462,7 +466,7 @@ export class GameEngine {
     const party = this.party();
     party.forEach((u, i) => {
       const at = this.nav.nearestOpen({ x: (i % 3) * 1.4 - 1.4, z: -12 + Math.floor(i / 3) * 1.4 });
-      u.group.position.set(at.x, 0, at.z);
+      u.group.position.set(at.x, this.groundY(at.x, at.z), at.z);
       u.path = [];
       u.order = u === this.hero ? "idle" : "follow";
     });
@@ -817,124 +821,280 @@ export class GameEngine {
   /* ---------------------------------------------------------------- world */
 
   private addLights() {
-    this.scene.add(new THREE.HemisphereLight("#cfd9e6", "#3a4a2a", 1.1));
-    const sun = new THREE.DirectionalLight("#fff1d6", 1.6);
-    sun.position.set(25, 40, 15);
+    this.scene.add(new THREE.HemisphereLight("#d9e4f0", "#4a3c26", 1.25));
+    const sun = new THREE.DirectionalLight("#ffe7c2", 2.1);
+    sun.position.set(28, 42, 12);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0006;
+    sun.shadow.normalBias = 0.03;
     const s = 50;
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 120 });
     this.scene.add(sun);
+    // Cool fill from the opposite side keeps shadowed faces readable.
+    const fill = new THREE.DirectionalLight("#9fb6d6", 0.45);
+    fill.position.set(-20, 18, -25);
+    this.scene.add(fill);
   }
 
   private buildWorld() {
     const rand = rng(1997);
+    const [ax, az] = bossDef.arena;
 
-    const groundGeo = new THREE.PlaneGeometry(MAP * 2 + 20, MAP * 2 + 20, 60, 60);
+    // Road spline through every shrine to the arena.
+    const route = [v2(0, 34), ...shrines.map((s) => v2(s.at[0], s.at[1])), v2(ax, az + 10)];
+    const roadPts = new THREE.CatmullRomCurve3(route).getSpacedPoints(220);
+    this.roadPts = roadPts;
+    const roadDist = (x: number, z: number) => {
+      let best = Infinity;
+      for (const p of roadPts) {
+        const d = (p.x - x) ** 2 + (p.z - z) ** 2;
+        if (d < best) best = d;
+      }
+      return Math.sqrt(best);
+    };
+
+    // Cheap value noise for color and height variation.
+    const hash = (x: number, z: number) => {
+      const h = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
+      return h - Math.floor(h);
+    };
+    const noise = (x: number, z: number) => {
+      const xi = Math.floor(x), zi = Math.floor(z);
+      const xf = x - xi, zf = z - zi;
+      const u = xf * xf * (3 - 2 * xf), w = zf * zf * (3 - 2 * zf);
+      const a = hash(xi, zi), b = hash(xi + 1, zi), c = hash(xi, zi + 1), d = hash(xi + 1, zi + 1);
+      return a + (b - a) * u + (c - a) * w + (a - b - c + d) * u * w;
+    };
+
+    // Ground: one mesh, painted with vertex colors (grass, road, arena tiles).
+    const size = MAP * 2 + 64;
+    const groundGeo = new THREE.PlaneGeometry(size, size, 200, 200);
+    groundGeo.rotateX(-Math.PI / 2);
     const pos = groundGeo.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < pos.count; i++) pos.setZ(i, (rand() - 0.5) * 0.14);
+    const colors = new Float32Array(pos.count * 3);
+    const grassA = new THREE.Color("#4d7a35");
+    const grassB = new THREE.Color("#3c6229");
+    const grassC = new THREE.Color("#6b8a3c");
+    const dirt = new THREE.Color("#8a6a42");
+    const dirtDark = new THREE.Color("#6e5233");
+    const grout = new THREE.Color("#4f4c45");
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      const n1 = noise(x * 0.12, z * 0.12);
+      const n2 = noise(x * 0.45 + 40, z * 0.45 + 40);
+      c.copy(grassA).lerp(grassB, n1).lerp(grassC, Math.max(0, n2 - 0.55) * 1.4);
+
+      const rd = roadDist(x, z);
+      const roadMix = THREE.MathUtils.smoothstep(2.7 + n2 * 0.6, 1.5, rd);
+      if (roadMix > 0) c.lerp(dirt.clone().lerp(dirtDark, n2 * 0.7), roadMix);
+
+      const ad = Math.hypot(x - ax, z - az);
+      // Under the arena tiles: dark grout that shows through the gaps.
+      const arenaMix = THREE.MathUtils.smoothstep(12.9, 12.1, ad);
+      if (arenaMix > 0) c.lerp(grout, arenaMix);
+
+      // Gentle rolling ground, flat where units fight and walk.
+      const flatten = Math.max(roadMix, arenaMix, THREE.MathUtils.smoothstep(4, 2, Math.hypot(x, z - 32)));
+      pos.setY(i, (noise(x * 0.07 + 9, z * 0.07 + 3) - 0.5) * 0.9 * (1 - flatten));
+      colors.set([c.r, c.g, c.b], i * 3);
+    }
+    groundGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    const segs = 201;
+    const heights = new Float32Array(segs * segs);
+    for (let i = 0; i < pos.count; i++) heights[i] = pos.getY(i);
+    this.heightGrid = { segs, size, data: heights };
     groundGeo.computeVertexNormals();
-    const ground = new THREE.Mesh(groundGeo, flat("#4f7239"));
-    ground.rotation.x = -Math.PI / 2;
+    const ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Dirt road through every shrine to the arena.
-    const route = [v2(0, 34), ...shrines.map((s) => v2(s.at[0], s.at[1])), v2(bossDef.arena[0], bossDef.arena[1] + 10)];
-    const curve = new THREE.CatmullRomCurve3(route);
-    const roadPts = curve.getSpacedPoints(160);
-    this.roadPts = roadPts;
-    const dirt = new THREE.InstancedMesh(new THREE.CircleGeometry(2.1, 12), flat("#8a6a42"), roadPts.length);
-    const m4 = new THREE.Matrix4();
-    roadPts.forEach((p, i) => {
-      const r = 0.85 + rand() * 0.35;
-      m4.compose(new THREE.Vector3(p.x, 0.1 + i * 0.0001, p.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, rand() * 6)), new THREE.Vector3(r, r, r));
-      dirt.setMatrixAt(i, m4);
-    });
-    dirt.receiveShadow = true;
-    this.scene.add(dirt);
+    // Arena floor: concentric bands of stone slabs with small gaps, merged into one mesh.
+    {
+      const bands = [
+        [0, 1.6, 1],
+        [1.7, 4.2, 8],
+        [4.3, 6.8, 14],
+        [6.9, 9.4, 20],
+        [9.5, 12.0, 26],
+      ];
+      const parts: THREE.BufferGeometry[] = [];
+      const gap = 0.07;
+      for (const [r0, r1, n] of bands) {
+        for (let k = 0; k < n; k++) {
+          const len = (Math.PI * 2) / n;
+          const geo = r0 === 0
+            ? new THREE.CircleGeometry(r1, 16)
+            : new THREE.RingGeometry(r0, r1, 1, 1, k * len + gap / r1, len - (2 * gap) / r1);
+          geo.rotateX(-Math.PI / 2);
+          const shade = new THREE.Color("#8e8b80").multiplyScalar(0.86 + rand() * 0.24);
+          const cols = new Float32Array(geo.attributes.position.count * 3);
+          for (let v = 0; v < geo.attributes.position.count; v++) cols.set([shade.r, shade.g, shade.b], v * 3);
+          geo.setAttribute("color", new THREE.BufferAttribute(cols, 3));
+          parts.push(geo.toNonIndexed());
+        }
+      }
+      const floorGeo = mergeGeometries(parts);
+      parts.forEach((g) => g.dispose());
+      const floor = new THREE.Mesh(floorGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+      floor.position.set(ax, 0.04, az);
+      floor.receiveShadow = true;
+      this.scene.add(floor);
+    }
 
-    // Arena: pale stone floor ringed by pillars.
-    const [ax, az] = bossDef.arena;
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(12, 12), flat("#8c8a80"));
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(ax, 0.12, az);
-    floor.receiveShadow = true;
-    this.scene.add(floor);
+    // Arena pillars with capstones.
+    const m4 = new THREE.Matrix4();
     for (let i = 0; i < 10; i++) {
       const a = (i / 10) * Math.PI * 2;
       if (Math.abs(a - Math.PI / 2) < 0.4) continue; // gap facing the road
-      const h = 2.2 + rand() * 1.6;
-      const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.1, h, 1.1), flat("#6d6b63"));
+      const h = 2.4 + rand() * 1.6;
       const px = ax + Math.cos(a) * 12.5;
       const pz = az + Math.sin(a) * 12.5;
-      pillar.position.set(px, h / 2, pz);
-      pillar.rotation.y = rand();
-      pillar.castShadow = true;
+      const pillar = new THREE.Group();
+      const shaft = new THREE.Mesh(new THREE.BoxGeometry(1.0, h, 1.0), flat("#6d6b63"));
+      shaft.position.y = h / 2;
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.3, 1.35), flat("#7d7b72"));
+      cap.position.y = h + 0.15;
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.35, 1.3), flat("#5f5d56"));
+      foot.position.y = 0.17;
+      [shaft, cap, foot].forEach((m) => {
+        m.castShadow = true;
+        m.receiveShadow = true;
+        pillar.add(m);
+      });
+      pillar.position.set(px, 0, pz);
+      pillar.rotation.y = a;
       this.scene.add(pillar);
       this.nav.blockCircle(px, pz, 0.8 + UNIT_RADIUS);
     }
 
-    // Forest: instanced trees and rocks, kept off the road and away from the arena.
-    const nearRoad = (x: number, z: number) => roadPts.some((p) => Math.hypot(p.x - x, p.z - z) < 4.2);
+    // Forest: pines and broadleaf trees, kept off the road and away from the arena.
+    const nearRoad = (x: number, z: number) => roadDist(x, z) < 4.2;
     const nearArena = (x: number, z: number) => Math.hypot(x - ax, z - az) < 15.5;
-    const spots: [number, number, number][] = [];
-    for (let tries = 0; spots.length < 260 && tries < 4000; tries++) {
-      const x = (rand() * 2 - 1) * (MAP + 8);
-      const z = (rand() * 2 - 1) * (MAP + 8);
-      if (nearRoad(x, z) || nearArena(x, z)) continue;
+    const spots: [number, number, number, number][] = [];
+    for (let tries = 0; spots.length < 520 && tries < 9000; tries++) {
+      const x = (rand() * 2 - 1) * (MAP + 24);
+      const z = (rand() * 2 - 1) * (MAP + 24);
+      if (nearRoad(x, z) || nearArena(x, z) || Math.hypot(x, z - 32) < 5) continue;
       if (Math.abs(x) < MAP - 6 && Math.abs(z) < MAP - 6 && rand() < 0.45) continue; // thinner in the middle
-      spots.push([x, z, 0.8 + rand() * 0.7]);
+      spots.push([x, z, 0.8 + rand() * 0.7, rand()]);
     }
-    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.26, 1.2, 6), flat("#5a3d24"), spots.length);
-    const lower = new THREE.InstancedMesh(new THREE.ConeGeometry(1.3, 2.2, 7), flat("#2f5a2c"), spots.length);
-    const upper = new THREE.InstancedMesh(new THREE.ConeGeometry(0.95, 1.8, 7), flat("#3b6e34"), spots.length);
+    const pines = spots.filter((t) => t[3] < 0.62);
+    const broad = spots.filter((t) => t[3] >= 0.62);
+    const tint = (base: string, v: number) => new THREE.Color(base).multiplyScalar(0.82 + v * 0.36);
+
+    const trunkGeo = new THREE.CylinderGeometry(0.16, 0.26, 1.3, 6);
+    const trunks = new THREE.InstancedMesh(trunkGeo, flat("#5a3d24"), spots.length);
+    const pineLow = new THREE.InstancedMesh(new THREE.ConeGeometry(1.35, 2.2, 7), flat("#ffffff"), pines.length);
+    const pineMid = new THREE.InstancedMesh(new THREE.ConeGeometry(1.05, 1.8, 7), flat("#ffffff"), pines.length);
+    const pineTop = new THREE.InstancedMesh(new THREE.ConeGeometry(0.7, 1.4, 7), flat("#ffffff"), pines.length);
+    const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.25, 0), flat("#ffffff"), broad.length);
+    const crown2 = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.85, 0), flat("#ffffff"), broad.length);
     spots.forEach(([x, z, s], i) => {
       const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rand() * 6, 0));
-      const sc = new THREE.Vector3(s, s, s);
-      trunks.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.6 * s, z), q, sc));
-      lower.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 2.0 * s, z), q, sc));
-      upper.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 3.1 * s, z), q, sc));
-      // Units can brush the canopy but not walk through the trunk.
+      trunks.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.6 * s, z), q, new THREE.Vector3(s, s, s)));
       this.nav.blockCircle(x, z, 0.55 * s + UNIT_RADIUS);
     });
-    [trunks, lower, upper].forEach((t) => {
+    pines.forEach(([x, z, s, v], i) => {
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, v * 9, 0));
+      const sc = new THREE.Vector3(s, s, s);
+      pineLow.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 2.0 * s, z), q, sc));
+      pineMid.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 3.0 * s, z), q, sc));
+      pineTop.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 3.9 * s, z), q, sc));
+      const col = tint("#2f5a2c", v);
+      pineLow.setColorAt(i, col);
+      pineMid.setColorAt(i, col.clone().multiplyScalar(1.12));
+      pineTop.setColorAt(i, col.clone().multiplyScalar(1.25));
+    });
+    broad.forEach(([x, z, s, v], i) => {
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(v * 3, v * 7, v * 2));
+      crown.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 2.4 * s, z), q, new THREE.Vector3(s, s * 0.9, s)));
+      crown2.setMatrixAt(i, m4.compose(new THREE.Vector3(x + 0.5 * s, 3.1 * s, z - 0.3 * s), q, new THREE.Vector3(s, s, s)));
+      const col = tint(v > 0.93 ? "#7a7a2e" : "#4f7a34", (v - 0.62) * 2.6);
+      crown.setColorAt(i, col);
+      crown2.setColorAt(i, col.clone().multiplyScalar(1.15));
+    });
+    [trunks, pineLow, pineMid, pineTop, crown, crown2].forEach((t) => {
       t.castShadow = true;
+      if (t.instanceColor) t.instanceColor.needsUpdate = true;
       this.scene.add(t);
     });
 
-    const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(0.5, 0), flat("#7d7d78"), 60);
-    for (let i = 0; i < 60; i++) {
+    const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(0.5, 0), flat("#ffffff"), 70);
+    for (let i = 0; i < 70; i++) {
       let x = 0, z = 0;
-      for (let t = 0; t < 20; t++) {
+      for (let t = 0; t < 30; t++) {
         x = (rand() * 2 - 1) * MAP;
         z = (rand() * 2 - 1) * MAP;
-        if (!nearArena(x, z) && Math.hypot(x, z - 34) > 4) break;
+        if (!nearArena(x, z) && Math.hypot(x, z - 32) > 4 && roadDist(x, z) > 1.8) break;
       }
       const s = 0.5 + rand() * 1.1;
-      rocks.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.15 * s, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rand(), rand(), rand())), new THREE.Vector3(s, s * 0.7, s)));
+      rocks.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.12 * s, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rand(), rand(), rand())), new THREE.Vector3(s, s * 0.7, s)));
+      rocks.setColorAt(i, new THREE.Color("#7d7d78").multiplyScalar(0.8 + rand() * 0.35));
       this.nav.blockCircle(x, z, 0.42 * s + UNIT_RADIUS * 0.6);
     }
     rocks.castShadow = true;
+    rocks.receiveShadow = true;
+    if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
     this.scene.add(rocks);
 
-    // Shrines.
+    // Grass tufts and flowers: decoration only, no collision.
+    const tuftGeo = new THREE.ConeGeometry(0.09, 0.45, 3);
+    tuftGeo.translate(0, 0.22, 0);
+    const tufts = new THREE.InstancedMesh(tuftGeo, new THREE.MeshLambertMaterial({ color: "#ffffff" }), 2200);
+    const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.09, 0), new THREE.MeshLambertMaterial({ color: "#ffffff" }), 260);
+    const flowerColors = ["#f2e8c9", "#e3c06a", "#c97b7b", "#b08ad6"];
+    let ti = 0, fi = 0;
+    for (let tries = 0; tries < 9000 && (ti < 2200 || fi < 260); tries++) {
+      const x = (rand() * 2 - 1) * (MAP + 6);
+      const z = (rand() * 2 - 1) * (MAP + 6);
+      if (roadDist(x, z) < 2.4 || Math.hypot(x - ax, z - az) < 13) continue;
+      const n = noise(x * 0.3, z * 0.3);
+      if (ti < 2200 && n > 0.35) {
+        for (let k = 0; k < 3 && ti < 2200; k++) {
+          const q = new THREE.Quaternion().setFromEuler(new THREE.Euler((rand() - 0.5) * 0.5, rand() * 6, (rand() - 0.5) * 0.5));
+          const sc = 0.7 + rand() * 0.8;
+          tufts.setMatrixAt(ti, m4.compose(new THREE.Vector3(x + (rand() - 0.5) * 0.4, 0, z + (rand() - 0.5) * 0.4), q, new THREE.Vector3(sc, sc, sc)));
+          tufts.setColorAt(ti, new THREE.Color("#5f8f3c").lerp(new THREE.Color("#93a84a"), rand()));
+          ti++;
+        }
+      } else if (fi < 260 && n > 0.6) {
+        flowers.setMatrixAt(fi, m4.compose(new THREE.Vector3(x, 0.18, z), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1)));
+        flowers.setColorAt(fi, new THREE.Color(flowerColors[Math.floor(rand() * flowerColors.length)]));
+        fi++;
+      }
+    }
+    tufts.count = ti;
+    flowers.count = fi;
+    [tufts, flowers].forEach((t) => {
+      if (t.instanceColor) t.instanceColor.needsUpdate = true;
+      this.scene.add(t);
+    });
+
+    // Shrines: stepped stone plinth, pillar, floating rune.
     for (const s of shrines) {
       const g = new THREE.Group();
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.7, 0.5, 8), flat("#6d6b63"));
-      base.position.y = 0.25;
-      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.7, 2.2, 0.7), flat("#8c8a80"));
-      pillar.position.y = 1.6;
-      const rune = new THREE.Mesh(new THREE.OctahedronGeometry(0.45), flat(s.rune, { emissive: s.rune, emissiveIntensity: 1.2 }));
-      rune.position.y = 3.3;
+      const step1 = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.95, 0.3, 8), flat("#5f5d56"));
+      step1.position.y = 0.15;
+      const step2 = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.45, 0.3, 8), flat("#6d6b63"));
+      step2.position.y = 0.45;
+      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.45, 2.2, 6), flat("#8c8a80"));
+      pillar.position.y = 1.7;
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.4, 0.25, 6), flat("#7d7b72"));
+      cap.position.y = 2.9;
+      const rune = new THREE.Mesh(new THREE.OctahedronGeometry(0.45), flat(s.rune, { emissive: s.rune, emissiveIntensity: 1.3 }));
+      rune.position.y = 3.6;
       const glow = new THREE.Mesh(
-        new THREE.RingGeometry(1.9, 2.4, 32),
-        new THREE.MeshBasicMaterial({ color: s.rune, transparent: true, opacity: 0.55, depthWrite: false }),
+        new THREE.RingGeometry(2.0, 2.45, 40),
+        new THREE.MeshBasicMaterial({ color: s.rune, transparent: true, opacity: 0.6, depthWrite: false }),
       );
       glow.rotation.x = -Math.PI / 2;
-      glow.position.y = 0.15;
-      [base, pillar, rune].forEach((m) => {
+      glow.position.y = 0.08;
+      [step1, step2, pillar, cap, rune].forEach((m) => {
         m.castShadow = true;
+        m.receiveShadow = true;
         g.add(m);
       });
       g.add(glow);
@@ -1041,7 +1201,7 @@ export class GameEngine {
     g.add(ring);
 
     g.scale.setScalar(st.scale);
-    g.position.copy(at);
+    g.position.set(at.x, this.groundY(at.x, at.z), at.z);
     this.scene.add(g);
 
     const bar = this.makeBar(1.1, kind === "hero" ? "#e3c06a" : "#7e9a63");
@@ -1090,7 +1250,7 @@ export class GameEngine {
 
     for (const [id, m] of this.shrineMeshes) {
       m.rune.rotation.y += dt * (this.visited.has(id) ? 0.3 : 1.5);
-      m.rune.position.y = 3.3 + Math.sin(t * 2 + m.rune.id) * 0.12;
+      m.rune.position.y = 3.6 + Math.sin(t * 2 + m.rune.id) * 0.12;
     }
 
     const mm = this.marker.material as THREE.MeshBasicMaterial;
@@ -1129,7 +1289,7 @@ export class GameEngine {
       if (distXZ(h.group.position, { x: s.at[0], z: s.at[1] }) < 2.7) {
         h.path = [];
         if (h.order === "move" || h.order === "attackMove") h.order = "idle";
-        h.group.position.y = 0;
+        this.settle(h);
         this.setPaused(true);
         this.cb.onShrine(s);
         return true;
@@ -1142,11 +1302,30 @@ export class GameEngine {
   private followPath(u: Unit, speed: number, dt: number) {
     while (u.path.length && distXZ(u.group.position, u.path[0]) < 0.12) u.path.shift();
     if (!u.path.length) {
-      u.group.position.y = 0;
+      this.settle(u);
       return true;
     }
     this.stepToward(u, u.path[0], speed, dt);
     return false;
+  }
+
+  /** Terrain height at (x, z), bilinear over the ground mesh's vertices. */
+  groundY(x: number, z: number) {
+    const { segs, size, data } = this.heightGrid;
+    const fx = ((x + size / 2) / size) * (segs - 1);
+    const fz = ((z + size / 2) / size) * (segs - 1);
+    const x0 = THREE.MathUtils.clamp(Math.floor(fx), 0, segs - 2);
+    const z0 = THREE.MathUtils.clamp(Math.floor(fz), 0, segs - 2);
+    const tx = THREE.MathUtils.clamp(fx - x0, 0, 1);
+    const tz = THREE.MathUtils.clamp(fz - z0, 0, 1);
+    const h = (cx: number, cz: number) => data[cz * segs + cx];
+    const a = h(x0, z0) + (h(x0 + 1, z0) - h(x0, z0)) * tx;
+    const b = h(x0, z0 + 1) + (h(x0 + 1, z0 + 1) - h(x0, z0 + 1)) * tx;
+    return a + (b - a) * tz;
+  }
+
+  private settle(u: Unit) {
+    u.group.position.y = this.groundY(u.group.position.x, u.group.position.z);
   }
 
   private stepToward(u: Unit, goal: THREE.Vector3, speed: number, dt: number) {
@@ -1160,7 +1339,7 @@ export class GameEngine {
     p.z += (dz / d) * step;
     u.group.rotation.y = Math.atan2(dx, dz);
     u.bob += dt * 12;
-    p.y = Math.abs(Math.sin(u.bob)) * 0.12;
+    p.y = this.groundY(p.x, p.z) + Math.abs(Math.sin(u.bob)) * 0.06;
   }
 
   private face(u: Unit, target: THREE.Vector3) {
@@ -1280,7 +1459,7 @@ export class GameEngine {
         return;
       }
       u.path = [];
-      u.group.position.y = 0;
+      this.settle(u);
       this.face(u, tp);
       u.atk -= dt;
       if (u.atk <= 0) {
@@ -1315,12 +1494,12 @@ export class GameEngine {
           this.followPath(u, st.speed * (d > 6 ? 1.35 : 1), dt);
         } else {
           u.path = [];
-          u.group.position.y = 0;
+          this.settle(u);
         }
         break;
       }
       default:
-        u.group.position.y = 0;
+        this.settle(u);
     }
   }
 
