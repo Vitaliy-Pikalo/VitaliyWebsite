@@ -1,2 +1,94 @@
 @import "tailwindcss";
-@config "../tailwind.config.ts";
+
+/* Palette taken from Warcraft III-era stone and gold UI frames. */
+@theme {
+  --color-stone-deep: #161b26;
+  --color-stone: #1c2230;
+  --color-stone-raised: #262f40;
+  --color-stone-edge: #3a4558;
+  --color-bone: #e6dfcb;
+  --color-muted: #9aa3b5;
+  --color-gold: #c9a24a;
+  --color-gold-bright: #e3c06a;
+  --color-gold-dim: #8a6d2c;
+  --color-moss: #7e9a63;
+
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-display: "Cinzel", Georgia, serif;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--color-stone);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+body {
+  background: var(--color-stone);
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  line-height: 1.65;
+}
+
+::selection {
+  background: var(--color-gold);
+  color: var(--color-stone-deep);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-gold-bright);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Faint torchlight that follows the pointer on desktop. Set from SiteSpotlight. */
+.spotlight {
+  background: radial-gradient(
+    600px circle at var(--x, 50%) var(--y, 20%),
+    rgba(201, 162, 74, 0.07),
+    transparent 70%
+  );
+}
+
+/* Carved-stone panel with a gold bevel, used once: the campaign call-to-action. */
+.stone-tablet {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 40%),
+    var(--color-stone-raised);
+  border: 1px solid var(--color-gold-dim);
+  box-shadow:
+    inset 0 0 0 3px var(--color-stone-deep),
+    inset 0 0 0 4px rgba(201, 162, 74, 0.35),
+    0 10px 30px -12px rgba(0, 0, 0, 0.7);
+}
+
+.stone-tablet::before,
+.stone-tablet::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--color-gold);
+  transform: rotate(45deg);
+  top: -6px;
+}
+
+.stone-tablet::before {
+  left: 14px;
+}
+
+.stone-tablet::after {
+  right: 14px;
+}
