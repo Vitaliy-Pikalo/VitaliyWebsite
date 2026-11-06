@@ -6,6 +6,7 @@ import { STATS } from "./units";
 /* ------------------------------------------------------------------ types */
 
 export type Status = "explore" | "fight" | "won" | "lost";
+export type Difficulty = "story" | "veteran";
 export type OrderType = "idle" | "follow" | "move" | "attackMove" | "attack" | "hold";
 
 export type UnitInfo = { id: number; kind: UnitKind; hp: number; max: number; order: OrderType; selected: boolean };
@@ -13,6 +14,7 @@ export type UnitInfo = { id: number; kind: UnitKind; hp: number; max: number; or
 export type MinimapState = {
   units: { x: number; z: number; kind: UnitKind; selected: boolean }[];
   boss: { x: number; z: number; alive: boolean };
+  shards: { x: number; z: number }[];
   shrines: { x: number; z: number; visited: boolean; color: string }[];
   view: Point[]; // camera footprint on the ground, 4 corners
 };
@@ -25,6 +27,10 @@ export type HudState = {
   bossHp: number;
   bossMax: number;
   bossAggro: boolean;
+  stoneSkin: boolean; // the giant takes reduced damage while shards live
+  shards: number;
+  marked: { id: number; kind: UnitKind } | null; // unit targeted by an incoming boulder
+  difficulty: Difficulty;
   deployCd: number;
   rallyCd: number;
   status: Status;
@@ -43,8 +49,17 @@ export type EngineCallbacks = {
   onEnd: (result: "won" | "lost") => void;
 };
 
-const BOSS = { hp: 2600, dmg: 44, cd: 1.6, radius: 1.7, speed: 3.4, slamEvery: 6.5, slamWindup: 1.7, slamRadius: 5.5, slamDmg: 130 };
+const BOSS = { dmg: 44, cd: 1.6, radius: 1.7, speed: 3.4, slamEvery: 6.5, slamWindup: 1.7, slamRadius: 5.5, slamDmg: 130 };
 const DEPLOY = { cd: 8, radius: 5, dmg: 150 };
+const SHARD = { cd: 1.2, speed: 3.8, radius: 0.7 };
+const BOULDER = { radius: 2.4, from: 0.85 }; // starts below 85% boss health
+const WAVES = [0.55, 0.25]; // boss health fractions that summon shards
+const STONE_SKIN = 0.5; // damage multiplier on the giant while shards live
+// Per-difficulty tuning. Story is meant to be won by selecting everyone and attacking.
+const DIFF = {
+  story: { bossHp: 2600, incoming: 0.6, boulderEvery: 13, boulderWindup: 2.8, boulderDmg: 170, shardHp: 130, shardDmg: 16, waves: [3, 2] },
+  veteran: { bossHp: 3200, incoming: 1.3, boulderEvery: 7, boulderWindup: 2.2, boulderDmg: 230, shardHp: 170, shardDmg: 24, waves: [5, 4] },
+};
 const RALLY = { cd: 15, frac: 0.35 };
 const MAP = 40;
 const ACQUIRE = 9; // idle units engage the boss inside this distance
@@ -60,6 +75,7 @@ type Unit = {
   order: OrderType;
   path: THREE.Vector3[];
   repath: number;
+  target: Target | null;
   slot: THREE.Vector3;
   hpBar: THREE.Group;
   hpFill: THREE.Mesh;
@@ -67,7 +83,10 @@ type Unit = {
   bob: number;
 };
 
-type Projectile = { mesh: THREE.Mesh; dmg: number; crit: boolean; speed: number };
+type Shard = { id: number; group: THREE.Group; hp: number; max: number; atk: number; hpBar: THREE.Group; hpFill: THREE.Mesh };
+type Target = "boss" | Shard;
+type Boulder = { target: Unit; at: THREE.Vector3; from: THREE.Vector3; t: number; windup: number; ring: THREE.Mesh; fill: THREE.Mesh; rock: THREE.Mesh };
+type Projectile = { mesh: THREE.Mesh; target: Target; dmg: number; crit: boolean; speed: number };
 type Fx = { mesh: THREE.Mesh; age: number; life: number; grow: number };
 type Floater = { el: HTMLDivElement; pos: THREE.Vector3; age: number };
 type Drag =
@@ -126,8 +145,13 @@ export class GameEngine {
   private boxEl: HTMLDivElement;
 
   private bossGroup!: THREE.Group;
-  private bossHp = BOSS.hp;
+  private bossHp = DIFF.story.bossHp;
   private bossAtk = 0;
+  private diff: Difficulty = "story";
+  private shards: Shard[] = [];
+  private wavesDone = 0;
+  private boulder: Boulder | null = null;
+  private boulderTimer = 4;
   private bossSlam = BOSS.slamEvery;
   private bossAggro = false;
   private bossDead = false;
@@ -222,6 +246,16 @@ export class GameEngine {
     }
   }
 
+  setDifficulty(d: Difficulty) {
+    this.diff = d;
+    if (!this.bossAggro) this.bossHp = this.maxBossHp;
+    this.emitHud();
+  }
+
+  private get maxBossHp() {
+    return DIFF[this.diff].bossHp;
+  }
+
   recruitFrom(shrineId: string) {
     const s = shrines.find((x) => x.id === shrineId);
     if (!s || this.visited.has(shrineId)) return;
@@ -246,6 +280,9 @@ export class GameEngine {
     this.ring(p, "#e3c06a", DEPLOY.radius, 0.6);
     if (this.bossAggro && !this.bossDead && distXZ(p, this.bossGroup.position) <= DEPLOY.radius + BOSS.radius) {
       this.hitBoss(DEPLOY.dmg, true);
+    }
+    for (const sh of [...this.shards]) {
+      if (distXZ(p, sh.group.position) <= DEPLOY.radius + SHARD.radius) this.hitShard(sh, DEPLOY.dmg, true);
     }
     this.emitHud();
   }
@@ -276,6 +313,7 @@ export class GameEngine {
       for (const u of units) {
         u.order = type === "stop" ? "idle" : "hold";
         u.path = [];
+        u.target = null;
       }
     }
     this.emitHud();
@@ -367,6 +405,10 @@ export class GameEngine {
       units: this.party().map((u) => ({ kind: u.kind, x: u.group.position.x, z: u.group.position.z, order: u.order })),
       followCam: this.followCam,
       cam: [this.camTarget.x, this.camTarget.z],
+      shards: this.shards.map((sh) => ({ x: sh.group.position.x, z: sh.group.position.z, hp: sh.hp })),
+      marked: this.boulder ? { kind: this.boulder.target.kind, at: [this.boulder.at.x, this.boulder.at.z] } : null,
+      difficulty: this.diff,
+      slam: this.telegraph ? [this.telegraph.at.x, this.telegraph.at.z] : null,
     };
   }
 
@@ -374,6 +416,35 @@ export class GameEngine {
   debugProject(x: number, y: number, z: number) {
     const p = new THREE.Vector3(x, y, z).project(this.camera);
     return { x: ((p.x + 1) / 2) * this.canvas.clientWidth, y: ((1 - p.y) / 2) * this.canvas.clientHeight };
+  }
+
+  /** Test hook: recruit every shrine's unit and place the party just outside the arena. */
+  debugSkipToBoss() {
+    for (const sh of shrines) this.recruitFrom(sh.id);
+    const party = this.party();
+    party.forEach((u, i) => {
+      const at = this.nav.nearestOpen({ x: (i % 3) * 1.4 - 1.4, z: -12 + Math.floor(i / 3) * 1.4 });
+      u.group.position.set(at.x, 0, at.z);
+      u.path = [];
+      u.order = u === this.hero ? "idle" : "follow";
+    });
+    this.camTarget.copy(this.hero.group.position);
+  }
+
+  /** Test hook: attack a target with the given unit kinds ("boss" or a shard index). */
+  debugAttack(kinds: UnitKind[], target: "boss" | number) {
+    const t: Target | undefined = target === "boss" ? "boss" : this.shards[target];
+    if (!t) return;
+    for (const u of this.party().filter((x) => kinds.includes(x.kind))) {
+      u.order = "attack";
+      u.target = t;
+      u.path = [];
+    }
+  }
+
+  /** Test hook: order the given unit kinds to a point. */
+  debugMoveKinds(kinds: UnitKind[], x: number, z: number) {
+    this.order(this.party().filter((u) => kinds.includes(u.kind)), v2(x, z), "move");
   }
 
   /** Number of units currently standing inside a blocked nav cell. */
@@ -576,15 +647,22 @@ export class GameEngine {
     return best;
   }
 
-  private pickBoss(p: { x: number; y: number }) {
-    if (this.bossDead) return false;
+  /** Enemy under the cursor: shards first (they're small), then the giant. */
+  private pickEnemy(p: { x: number; y: number }): Target | null {
+    const ppu = this.pixelsPerUnit();
+    for (const sh of this.shards) {
+      const s = this.screenOf(sh.group.position, 0.6);
+      if (Math.hypot(s.x - p.x, s.y - p.y) < Math.max(16, 1.1 * ppu)) return sh;
+    }
+    if (this.bossDead) return null;
     const s = this.screenOf(this.bossGroup.position, 2.8);
-    return Math.hypot(s.x - p.x, s.y - p.y) < 2.6 * this.pixelsPerUnit();
+    return Math.hypot(s.x - p.x, s.y - p.y) < 2.6 * ppu ? "boss" : null;
   }
 
   private leftClick(p: { x: number; y: number }, shift: boolean) {
     if (this.pendingAttackMove) {
-      if (this.pickBoss(p)) this.issueAttack();
+      const enemy = this.pickEnemy(p);
+      if (enemy) this.issueAttack(enemy);
       else {
         const g = this.groundAt(p);
         if (g) this.issueMove(g, true);
@@ -597,8 +675,9 @@ export class GameEngine {
       this.selectUnit(u.id, shift);
       return;
     }
-    if (this.pickBoss(p)) {
-      this.issueAttack();
+    const enemy = this.pickEnemy(p);
+    if (enemy) {
+      this.issueAttack(enemy);
       return;
     }
     const g = this.groundAt(p);
@@ -607,8 +686,9 @@ export class GameEngine {
 
   private rightClick(p: { x: number; y: number }) {
     if (this.pendingAttackMove) this.command("cancel");
-    if (this.pickBoss(p)) {
-      this.issueAttack();
+    const enemy = this.pickEnemy(p);
+    if (enemy) {
+      this.issueAttack(enemy);
       return;
     }
     const g = this.groundAt(p);
@@ -645,15 +725,16 @@ export class GameEngine {
     this.flashMarker(point, attackMove ? "#e0705c" : "#7cd16b");
   }
 
-  private issueAttack() {
+  private issueAttack(target: Target) {
     const units = this.selectedAlive();
     if (!units.length) return;
     for (const u of units) {
       u.order = "attack";
+      u.target = target;
       u.path = [];
       u.repath = 0;
     }
-    this.flashMarker(this.bossGroup.position.clone(), "#e0705c");
+    this.flashMarker(this.targetPos(target).clone(), "#e0705c");
     this.emitHud();
   }
 
@@ -673,6 +754,7 @@ export class GameEngine {
       free.sort((a, b) => distXZ(u.group.position, a) - distXZ(u.group.position, b));
       const slot = free.shift()!;
       u.order = type;
+      u.target = null;
       this.setPath(u, slot);
     }
     this.emitHud();
@@ -935,6 +1017,7 @@ export class GameEngine {
       order: "follow",
       path: [],
       repath: 0,
+      target: null,
       slot,
       hpBar: bar.group,
       hpFill: bar.fill,
@@ -1042,15 +1125,47 @@ export class GameEngine {
     u.group.rotation.y = Math.atan2(target.x - u.group.position.x, target.z - u.group.position.z);
   }
 
-  private reach(u: Unit) {
-    return STATS[u.kind].range + BOSS.radius;
+  private reach(u: Unit, t: Target) {
+    return STATS[u.kind].range + this.targetRadius(t);
+  }
+
+  private targetPos(t: Target) {
+    return t === "boss" ? this.bossGroup.position : t.group.position;
+  }
+
+  private targetRadius(t: Target) {
+    return t === "boss" ? BOSS.radius : SHARD.radius;
+  }
+
+  private targetAlive(t: Target) {
+    return t === "boss" ? !this.bossDead : t.hp > 0;
+  }
+
+  private hitTarget(t: Target, dmg: number, big: boolean) {
+    if (t === "boss") this.hitBoss(dmg, big);
+    else this.hitShard(t, dmg, big);
+  }
+
+  /** Closest live enemy within `maxD` (the giant counts only once it's awake). */
+  private nearestEnemy(from: THREE.Vector3, maxD: number): Target | null {
+    let best: Target | null = null;
+    let bestD = maxD;
+    for (const sh of this.shards) {
+      const d = distXZ(from, sh.group.position) - SHARD.radius;
+      if (d < bestD) {
+        bestD = d;
+        best = sh;
+      }
+    }
+    if (this.bossAggro && !this.bossDead) {
+      const d = distXZ(from, this.bossGroup.position) - BOSS.radius;
+      if (d < bestD) best = "boss";
+    }
+    return best;
   }
 
   private updateUnit(u: Unit, dt: number) {
     const st = STATS[u.kind];
-    const bp = this.bossGroup.position;
-    const bossUp = this.bossAggro && !this.bossDead;
-    const dBoss = distXZ(u.group.position, bp);
     u.repath -= dt;
 
     // Recruits step out of an incoming slam unless you've given them a move or hold order.
@@ -1093,35 +1208,46 @@ export class GameEngine {
       }
     }
 
-    const canFight = !st.heal && !this.bossDead;
-    const engage =
-      canFight &&
-      (u.order === "attack" ||
-        (bossUp && (u.order === "idle" || u.order === "follow" || u.order === "attackMove") && dBoss <= ACQUIRE + this.reach(u)) ||
-        (bossUp && u.order === "hold" && dBoss <= this.reach(u)));
+    let tgt: Target | null = null;
+    if (!st.heal) {
+      if (u.order === "attack") {
+        if (u.target && this.targetAlive(u.target)) tgt = u.target;
+        else {
+          u.order = "idle";
+          u.target = null;
+        }
+      }
+      if (!tgt && (u.order === "idle" || u.order === "follow" || u.order === "attackMove")) {
+        tgt = this.nearestEnemy(u.group.position, ACQUIRE + st.range);
+      }
+      if (!tgt && u.order === "hold") tgt = this.nearestEnemy(u.group.position, st.range + 0.2);
+    }
 
-    if (engage) {
-      if (dBoss > this.reach(u)) {
+    if (tgt) {
+      const tp = this.targetPos(tgt);
+      const d = distXZ(u.group.position, tp);
+      const reach = this.reach(u, tgt);
+      if (d > reach) {
         if (u.order === "hold") return;
         if (u.repath <= 0 || !u.path.length) {
-          const toward = bp.clone().sub(u.group.position).setY(0).setLength(Math.max(0, dBoss - this.reach(u) + 0.4)).add(u.group.position);
+          const toward = tp.clone().sub(u.group.position).setY(0).setLength(Math.max(0, d - reach + 0.4)).add(u.group.position);
           this.setPath(u, toward);
-          u.repath = 0.4;
+          u.repath = tgt === "boss" ? 0.4 : 0.25;
         }
         this.followPath(u, st.speed, dt);
         return;
       }
       u.path = [];
       u.group.position.y = 0;
-      this.face(u, bp);
+      this.face(u, tp);
       u.atk -= dt;
       if (u.atk <= 0) {
         u.atk = st.cd;
         if (st.ranged) {
           const crit = !!st.crit && Math.random() < st.crit;
-          this.shoot(u.group.position, st.dmg * (crit ? 2 : 1), crit, st.trim);
+          this.shoot(u.group.position, tgt, st.dmg * (crit ? 2 : 1), crit, st.trim);
         } else {
-          this.hitBoss(st.dmg, false);
+          this.hitTarget(tgt, st.dmg, false);
         }
       }
       return;
@@ -1207,13 +1333,20 @@ export class GameEngine {
     if (!party.some((u) => distXZ(u.group.position, home) < 20)) {
       this.bossAggro = false;
       this.status = "explore";
-      this.bossHp = BOSS.hp;
+      this.bossHp = this.maxBossHp;
       this.clearTelegraph();
+      this.clearBoulder();
+      [...this.shards].forEach((sh) => this.removeShard(sh));
+      this.wavesDone = 0;
+      this.boulderTimer = 4;
       this.bossGroup.position.copy(home);
+      this.emitHud();
       return;
     }
 
     const bp = this.bossGroup.position;
+    this.updateShards(dt);
+    this.updateBoulder(dt);
 
     if (this.telegraph) {
       this.telegraph.t += dt;
@@ -1232,9 +1365,17 @@ export class GameEngine {
       return;
     }
 
+    if (this.bossHp <= this.maxBossHp * BOULDER.from && !this.boulder) {
+      this.boulderTimer -= dt;
+      if (this.boulderTimer <= 0) {
+        this.boulderTimer = DIFF[this.diff].boulderEvery;
+        this.throwBoulder();
+      }
+    }
+
     this.bossSlam -= dt;
     if (this.bossSlam <= 0) {
-      this.bossSlam = this.bossHp < BOSS.hp / 2 ? BOSS.slamEvery * 0.7 : BOSS.slamEvery;
+      this.bossSlam = this.bossHp < this.maxBossHp / 2 ? BOSS.slamEvery * 0.7 : BOSS.slamEvery;
       this.startTelegraph(bp.clone().setY(0));
       return;
     }
@@ -1258,6 +1399,146 @@ export class GameEngine {
       this.bossAtk = BOSS.cd;
       this.damage(target, BOSS.dmg);
     }
+  }
+
+  /* ---------------------------------------------------------- mechanics */
+
+  private spawnShards(n: number) {
+    const [ax, az] = bossDef.arena;
+    const base = Math.random() * Math.PI * 2;
+    for (let i = 0; i < n; i++) {
+      const a = base + (i / n) * Math.PI * 2;
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.62, 0),
+        flat("#6d6b63", { emissive: "#e0503c", emissiveIntensity: 0.35 }),
+      );
+      body.position.y = 0.7;
+      body.castShadow = true;
+      const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.28), flat("#e0503c", { emissive: "#e0503c", emissiveIntensity: 1 }));
+      shard.position.y = 1.45;
+      g.add(body, shard);
+      g.position.set(ax + Math.cos(a) * 9.5, 0, az + Math.sin(a) * 9.5);
+      this.scene.add(g);
+      const bar = this.makeBar(0.9, "#e0705c");
+      bar.group.position.y = 2.0;
+      g.add(bar.group);
+      const hp = DIFF[this.diff].shardHp;
+      this.shards.push({ id: this.nextId++, group: g, hp, max: hp, atk: 0, hpBar: bar.group, hpFill: bar.fill });
+      this.ring(g.position, "#e0503c", 1.8, 0.6);
+    }
+    this.float(this.bossGroup.position.clone().setY(5), "Stone shards!", "crit");
+    this.emitHud();
+  }
+
+  private removeShard(sh: Shard) {
+    this.scene.remove(sh.group);
+    sh.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.dispose();
+        (o.material as THREE.Material).dispose();
+      }
+    });
+    this.shards = this.shards.filter((x) => x !== sh);
+  }
+
+  private hitShard(sh: Shard, raw: number, big: boolean) {
+    if (sh.hp <= 0) return;
+    sh.hp -= raw;
+    this.float(sh.group.position.clone().setY(1.8), `${Math.round(raw)}`, big ? "crit" : "dmg");
+    if (sh.hp <= 0) {
+      this.ring(sh.group.position, "#e0503c", 1.6, 0.4);
+      this.removeShard(sh);
+      this.emitHud();
+    }
+  }
+
+  /** Shards hunt the backline: healer first, then ranged, then whoever is closest. */
+  private updateShards(dt: number) {
+    const party = this.party();
+    if (!party.length) return;
+    const backline = party.filter((u) => u.kind === "banner" || u.kind === "strategist" || u.kind === "quant");
+    for (const sh of this.shards) {
+      sh.group.rotation.y += dt * 1.5;
+      const pool = backline.length ? backline : party;
+      const target = pool.reduce((a, b) => (distXZ(a.group.position, sh.group.position) <= distXZ(b.group.position, sh.group.position) ? a : b));
+      const d = distXZ(target.group.position, sh.group.position);
+      const reach = SHARD.radius + UNIT_RADIUS + 0.5;
+      if (d > reach) {
+        const dir = target.group.position.clone().sub(sh.group.position).setY(0).normalize();
+        sh.group.position.addScaledVector(dir, Math.min(d - reach, SHARD.speed * dt));
+        continue;
+      }
+      sh.atk -= dt;
+      if (sh.atk <= 0) {
+        sh.atk = SHARD.cd;
+        this.damage(target, DIFF[this.diff].shardDmg);
+      }
+    }
+  }
+
+  private throwBoulder() {
+    const party = this.party();
+    const priority: UnitKind[] = ["banner", "strategist", "quant", "builder", "engineer"];
+    let target: Unit | undefined;
+    for (const k of priority) {
+      target = party.find((u) => u.kind === k);
+      if (target) break;
+    }
+    target ??= this.hero;
+    if (target.hp <= 0) return;
+    const at = target.group.position.clone().setY(0);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(BOULDER.radius - 0.2, BOULDER.radius, 40),
+      new THREE.MeshBasicMaterial({ color: "#b08ad6", transparent: true, opacity: 0.95, depthWrite: false }),
+    );
+    const fill = new THREE.Mesh(
+      new THREE.CircleGeometry(BOULDER.radius, 40),
+      new THREE.MeshBasicMaterial({ color: "#b08ad6", transparent: true, opacity: 0.3, depthWrite: false }),
+    );
+    [ring, fill].forEach((m) => {
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(at.x, 0.17, at.z);
+      this.scene.add(m);
+    });
+    fill.scale.setScalar(0.01);
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7, 0), flat("#77756b"));
+    rock.castShadow = true;
+    const from = this.bossGroup.position.clone().setY(5.5);
+    rock.position.copy(from);
+    this.scene.add(rock);
+    this.boulder = { target, at, from, t: 0, windup: DIFF[this.diff].boulderWindup, ring, fill, rock };
+    this.emitHud();
+  }
+
+  private updateBoulder(dt: number) {
+    const b = this.boulder;
+    if (!b) return;
+    b.t += dt;
+    const k = Math.min(1, b.t / b.windup);
+    b.fill.scale.setScalar(Math.max(0.01, k));
+    // Arc from the giant's hand to the marked spot.
+    b.rock.position.lerpVectors(b.from, b.at.clone().setY(0.6), k);
+    b.rock.position.y += Math.sin(k * Math.PI) * 6;
+    b.rock.rotation.x += dt * 4;
+    if (k < 1) return;
+    for (const u of this.party()) {
+      if (distXZ(u.group.position, b.at) <= BOULDER.radius) this.damage(u, DIFF[this.diff].boulderDmg);
+    }
+    this.ring(b.at, "#b08ad6", BOULDER.radius + 1, 0.5);
+    this.clearBoulder();
+  }
+
+  private clearBoulder() {
+    const b = this.boulder;
+    if (!b) return;
+    for (const m of [b.ring, b.fill, b.rock]) {
+      this.scene.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    this.boulder = null;
+    this.emitHud();
   }
 
   private startTelegraph(at: THREE.Vector3) {
@@ -1294,7 +1575,7 @@ export class GameEngine {
 
   private damage(u: Unit, raw: number) {
     if (u.hp <= 0) return;
-    const amt = Math.round(this.builderNear(u) ? raw * 0.75 : raw);
+    const amt = Math.round(raw * DIFF[this.diff].incoming * (this.builderNear(u) ? 0.75 : 1));
     u.hp -= amt;
     this.float(u.group.position, `-${amt}`, "hurt");
     if (u.hp <= 0) {
@@ -1308,12 +1589,20 @@ export class GameEngine {
 
   private hitBoss(raw: number, big: boolean) {
     if (this.bossDead) return;
-    this.bossHp -= raw;
-    this.float(this.bossGroup.position.clone().setY(4), `${Math.round(raw)}`, big ? "crit" : "dmg");
+    const amt = this.shards.length ? raw * STONE_SKIN : raw;
+    this.bossHp -= amt;
+    this.float(this.bossGroup.position.clone().setY(4), `${Math.round(amt)}`, this.shards.length ? "dmg" : big ? "crit" : "dmg");
+    const wave = WAVES[this.wavesDone];
+    if (wave !== undefined && this.bossHp > 0 && this.bossHp <= this.maxBossHp * wave) {
+      this.spawnShards(DIFF[this.diff].waves[this.wavesDone]);
+      this.wavesDone++;
+    }
     if (this.bossHp <= 0) {
       this.bossHp = 0;
       this.bossDead = true;
       this.clearTelegraph();
+      this.clearBoulder();
+      [...this.shards].forEach((sh) => this.removeShard(sh));
       this.bossGroup.rotation.x = -Math.PI / 2.2;
       this.bossGroup.position.y = 0.6;
       this.dropScroll(this.bossGroup.position.clone());
@@ -1347,19 +1636,20 @@ export class GameEngine {
     this.cb.onEnd(result);
   }
 
-  private shoot(from: THREE.Vector3, dmg: number, crit: boolean, color: string) {
+  private shoot(from: THREE.Vector3, target: Target, dmg: number, crit: boolean, color: string) {
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(crit ? 0.22 : 0.15, 6, 4), new THREE.MeshBasicMaterial({ color }));
     mesh.position.copy(from).setY(1.3);
     this.scene.add(mesh);
-    this.projectiles.push({ mesh, dmg, crit, speed: 18 });
+    this.projectiles.push({ mesh, target, dmg, crit, speed: 18 });
   }
 
   private updateProjectiles(dt: number) {
     this.projectiles = this.projectiles.filter((p) => {
-      const goal = this.bossGroup.position.clone().setY(3);
+      const alive = this.targetAlive(p.target);
+      const goal = this.targetPos(p.target).clone().setY(p.target === "boss" ? 3 : 0.8);
       const d = p.mesh.position.distanceTo(goal);
-      if (d < 0.4 || this.bossDead) {
-        if (!this.bossDead) this.hitBoss(p.dmg, p.crit);
+      if (d < 0.4 || !alive) {
+        if (alive) this.hitTarget(p.target, p.dmg, p.crit);
         this.scene.remove(p.mesh);
         p.mesh.geometry.dispose();
         (p.mesh.material as THREE.Material).dispose();
@@ -1432,7 +1722,11 @@ export class GameEngine {
       u.hpFill.scale.x = Math.max(0.001, u.hp / u.max);
       u.hpBar.quaternion.copy(this.camera.quaternion).premultiply(u.group.quaternion.clone().invert());
     }
-    this.bossHpFill.scale.x = Math.max(0.001, this.bossHp / BOSS.hp);
+    for (const sh of this.shards) {
+      sh.hpFill.scale.x = Math.max(0.001, sh.hp / sh.max);
+      sh.hpBar.quaternion.copy(this.camera.quaternion).premultiply(sh.group.quaternion.clone().invert());
+    }
+    this.bossHpFill.scale.x = Math.max(0.001, this.bossHp / this.maxBossHp);
     this.bossHpBar.visible = this.bossAggro && !this.bossDead;
     this.bossHpBar.quaternion.copy(this.camera.quaternion).premultiply(this.bossGroup.quaternion.clone().invert());
   }
@@ -1536,8 +1830,12 @@ export class GameEngine {
       warband: this.allies.map((u) => this.info(u)),
       selection: party.filter((u) => this.selected.has(u)).map((u) => this.info(u)),
       bossHp: Math.round(this.bossHp),
-      bossMax: BOSS.hp,
+      bossMax: this.maxBossHp,
       bossAggro: this.bossAggro && !this.bossDead,
+      stoneSkin: this.shards.length > 0,
+      shards: this.shards.length,
+      marked: this.boulder && this.boulder.target.hp > 0 ? { id: this.boulder.target.id, kind: this.boulder.target.kind } : null,
+      difficulty: this.diff,
       deployCd: this.deployCd,
       rallyCd: this.rallyCd,
       status: this.status,
@@ -1547,6 +1845,7 @@ export class GameEngine {
       minimap: {
         units: party.map((u) => ({ x: u.group.position.x, z: u.group.position.z, kind: u.kind, selected: this.selected.has(u) })),
         boss: { x: this.bossGroup.position.x, z: this.bossGroup.position.z, alive: !this.bossDead },
+        shards: this.shards.map((sh) => ({ x: sh.group.position.x, z: sh.group.position.z })),
         shrines: shrines.map((s) => ({ x: s.at[0], z: s.at[1], visited: this.visited.has(s.id), color: s.rune })),
         view: this.viewFootprint(),
       },
