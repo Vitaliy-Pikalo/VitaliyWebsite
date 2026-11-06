@@ -17,8 +17,6 @@ export default function RootLayout({
   return (
     <html lang="en" className="scroll-smooth">
       <body className="antialiased">
-        {/* Netflix-style film grain overlay */}
-        <div className="grain-overlay" aria-hidden />
         {children}
       </body>
     </html>
