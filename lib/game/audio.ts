@@ -1,3 +1,5 @@
+import { Score, type MusicMode } from "./music";
+
 // Procedural sound for the campaign: every effect is synthesized with the Web Audio API,
 // so the game ships no audio files. Effects take any BaseAudioContext, which lets tests
 // render them offline and check their levels.
@@ -386,9 +388,17 @@ export class GameAudio {
   private master!: GainNode;
   private sfxBus!: GainNode;
   private reverbIn!: AudioNode;
-  protected musicBus!: GainNode;
+  private musicBus!: GainNode;
   private last = new Map<SfxName, number>();
   private listeners = new Set<(s: AudioSettings) => void>();
+  private score: Score | null = null;
+  private wantMusic: MusicMode = "off";
+  private onVisibility = () => {
+    if (!this.ctx) return;
+    // Background tabs throttle timers, which would starve the music scheduler; pause instead.
+    if (document.hidden) void this.ctx.suspend();
+    else void this.ctx.resume();
+  };
 
   /** Creates or resumes the context. Call from a user gesture (browsers block audio before one). */
   unlock() {
@@ -415,14 +425,17 @@ export class GameAudio {
       rev.output.connect(revGain).connect(this.master);
       this.reverbIn = rev.input;
       this.applySettings();
-      this.onUnlock(ctx);
+      this.score = new Score(ctx, this.musicBus, this.reverbIn);
+      if (this.wantMusic !== "off") this.score.setMode(this.wantMusic);
+      document.addEventListener("visibilitychange", this.onVisibility);
     }
     if (this.ctx.state === "suspended") void this.ctx.resume();
   }
 
-  /** Hook for subclasses (the score) once the context exists. */
-  protected onUnlock(ctx: AudioContext) {
-    void ctx;
+  /** Switches the score; remembered until the context exists. */
+  music(mode: MusicMode) {
+    this.wantMusic = mode;
+    this.score?.setMode(mode);
   }
 
   get reverbSend() {
@@ -446,7 +459,7 @@ export class GameAudio {
     return () => this.listeners.delete(l);
   }
 
-  protected applySettings() {
+  private applySettings() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     this.master.gain.setTargetAtTime(this.settings.sound ? 0.8 : 0, t, 0.05);
@@ -466,6 +479,9 @@ export class GameAudio {
 
   dispose() {
     if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisibility);
+    this.score?.dispose();
+    this.score = null;
     void this.ctx?.close();
     this.ctx = null;
     this.listeners.clear();
