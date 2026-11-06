@@ -1,9 +1,10 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { animateGiant, animateUnit, buildGiant, buildUnit, newAnim, newGiantAnim, type GiantAnim, type GiantRig, type UnitAnim, type UnitRig } from "./models";
+import type { GameAudio, SfxName } from "./audio";
 import { animateBraziers, buildBrazier, glowSprite, Particles, type Brazier } from "./fx";
 import { NavGrid, type Point } from "./nav";
-import { abilities, boss as bossDef, shrines, type AbilityId, type Shrine, type UnitKind } from "./story";
+import { abilities, barks, boss as bossDef, shrines, type AbilityId, type Shrine, type UnitKind } from "./story";
 import { STATS } from "./units";
 
 /* ------------------------------------------------------------------ types */
@@ -94,11 +95,11 @@ type Unit = {
 
 type Shard = { id: number; group: THREE.Group; hp: number; max: number; atk: number; hpBar: THREE.Group; hpFill: THREE.Mesh };
 type Target = "boss" | Shard;
-type Boulder = { target: Unit; at: THREE.Vector3; from: THREE.Vector3; t: number; ring: THREE.Mesh; fill: THREE.Mesh; rock: THREE.Mesh };
+type Boulder = { target: Unit; at: THREE.Vector3; from: THREE.Vector3; t: number; ring: THREE.Mesh; fill: THREE.Mesh; rock: THREE.Mesh; launched: boolean };
 type Fade = { obj: THREE.Object3D; age: number; life: number; from?: THREE.Vector3; to?: THREE.Vector3 };
 type Projectile = { mesh: THREE.Mesh; target: Target; dmg: number; crit: boolean; speed: number };
 type Fx = { mesh: THREE.Mesh; age: number; life: number; grow: number };
-type Floater = { el: HTMLDivElement; pos: THREE.Vector3; age: number };
+type Floater = { el: HTMLDivElement; pos: THREE.Vector3; age: number; life: number; rise: number };
 type Drag =
   | { kind: "box"; x0: number; y0: number; x1: number; y1: number; active: boolean; shift: boolean }
   | { kind: "pan"; x: number; y: number; moved: number; pointerType: string }
@@ -193,6 +194,8 @@ export class GameEngine {
   private resizeObs: ResizeObserver;
   private disposed = false;
   private lowPower = false;
+  private audio: GameAudio | null = null;
+  private lastBark = 0;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -218,7 +221,7 @@ export class GameEngine {
     this.scene.add(this.particles.mesh);
     this.hero = this.spawn("hero", v2(0, 32), new THREE.Vector3());
     this.hero.order = "idle";
-    this.setSelection([this.hero]);
+    this.setSelection([this.hero], false);
     this.camTarget.copy(this.hero.group.position);
 
     this.marker = new THREE.Mesh(
@@ -295,8 +298,36 @@ export class GameEngine {
     const unit = this.spawn(s.recruit, v2(at.x, at.z), slots[this.allies.length % slots.length]);
     this.allies.push(unit);
     this.ring(unit.group.position, s.rune, 3, 0.8);
+    this.snd("recruit");
     this.particles.burst(unit.group.position.clone().setY(0.5), { count: 26, color: [s.rune, "#ffffff"], speed: 2.5, up: 5, gravity: 6, life: 1.1 });
     this.emitHud();
+  }
+
+  setAudio(a: GameAudio) {
+    this.audio = a;
+  }
+
+  /** Plays an effect panned to where it happens on screen; quieter when off-screen. */
+  private snd(name: SfxName, at?: THREE.Vector3, gain = 1, dur?: number) {
+    if (!this.audio) return;
+    let pan = 0;
+    if (at) {
+      const p = at.clone().project(this.camera);
+      pan = THREE.MathUtils.clamp(p.x, -1, 1) * 0.7;
+      if (Math.abs(p.x) > 1.15 || Math.abs(p.y) > 1.15) gain *= 0.35;
+    }
+    this.audio.sfx(name, { pan, gain, dur });
+  }
+
+  /** A unit acknowledges a selection or an order (rate-limited). */
+  private bark(u: Unit, kind: "select" | "order") {
+    const now = performance.now();
+    if (now - this.lastBark < 1600) return;
+    this.lastBark = now;
+    const lines = barks[u.kind][kind];
+    const line = lines[Math.floor(Math.random() * lines.length)];
+    this.float(u.group.position.clone().setY(2.9), line, "bark");
+    this.audio?.speak(u.kind, line);
   }
 
   isUnlocked(a: AbilityId) {
@@ -305,7 +336,11 @@ export class GameEngine {
 
   /** Casts one of Vitaliy's abilities. Returns false if it couldn't be cast. */
   cast(a: AbilityId) {
-    if (this.over() || this.paused || this.hero.hp <= 0 || !this.isUnlocked(a) || this.cds[a] > 0) return false;
+    if (this.over() || this.paused || this.hero.hp <= 0) return false;
+    if (!this.isUnlocked(a) || this.cds[a] > 0) {
+      this.snd("locked");
+      return false;
+    }
     const hp = this.hero.group.position;
     if (a === "drone") {
       const revived = this.fallen.pop();
@@ -332,7 +367,10 @@ export class GameEngine {
       this.flyDrone(hp, revived ? revived.group.position : hp);
     } else if (a === "checkmate") {
       const t = this.nearestEnemy(hp, ABILITY.checkmate.range);
-      if (!t) return false;
+      if (!t) {
+        this.snd("locked");
+        return false;
+      }
       const tp = this.targetPos(t).clone();
       this.beam(tp);
       this.hitTarget(t, ABILITY.checkmate.dmg * this.dmgMult(), true);
@@ -351,6 +389,7 @@ export class GameEngine {
       this.float(hp.clone().setY(3), "Kelly bet: 1.5x", "crit");
     }
     this.cds[a] = ABILITY[a].cd;
+    this.snd(a, hp);
     this.hero.anim.attack = this.hero.anim.attackDur = 0.45;
     this.emitHud();
     return true;
@@ -773,9 +812,14 @@ export class GameEngine {
     this.setSelection(add ? [...new Set([...this.selected, ...inside])] : inside);
   }
 
-  private setSelection(units: Unit[]) {
+  private setSelection(units: Unit[], feedback = true) {
     this.selected = new Set(units.filter((u) => u.hp > 0));
     for (const u of [this.hero, ...this.allies]) u.ring.visible = this.selected.has(u);
+    if (feedback && this.selected.size) {
+      this.snd("select");
+      const first = this.selected.has(this.hero) ? this.hero : [...this.selected][0];
+      this.bark(first, "select");
+    }
     this.emitHud();
   }
 
@@ -790,11 +834,15 @@ export class GameEngine {
     if (!units.length) return;
     this.order(units, point, attackMove ? "attackMove" : "move");
     this.flashMarker(point, attackMove ? "#e0705c" : "#7cd16b");
+    this.snd("move");
+    this.bark(units.includes(this.hero) ? this.hero : units[0], "order");
   }
 
   private issueAttack(target: Target) {
     const units = this.selectedAlive();
     if (!units.length) return;
+    this.snd("move");
+    this.bark(units.includes(this.hero) ? this.hero : units[0], "order");
     for (const u of units) {
       u.order = "attack";
       u.target = target;
@@ -1280,6 +1328,7 @@ export class GameEngine {
         if (h.order === "move" || h.order === "attackMove") h.order = "idle";
         this.settle(h);
         this.setPaused(true);
+        this.snd("shrine");
         this.cb.onShrine(s);
         return true;
       }
@@ -1411,6 +1460,7 @@ export class GameEngine {
           u.atk = st.cd;
           u.anim.attack = u.anim.attackDur = 0.5;
           const amt = Math.min(st.heal, hurt.max - hurt.hp);
+          if (amt > 0) this.snd("heal", hurt.group.position, 0.6);
           hurt.hp += amt;
           this.ring(hurt.group.position, "#7e9a63", 1.2, 0.4);
           this.particles.burst(hurt.group.position.clone().setY(0.7), { count: 6, color: "#9cd67e", speed: 0.5, up: 2.8, gravity: 1, life: 0.9, size: 0.1 });
@@ -1459,8 +1509,10 @@ export class GameEngine {
         if (st.ranged) {
           const crit = !!st.crit && Math.random() < st.crit;
           this.shoot(u.group.position, tgt, st.dmg * this.dmgMult() * (crit ? 2 : 1), crit, st.trim);
+          this.snd(u.kind === "strategist" ? "bolt" : "shoot", u.group.position, 0.7);
         } else {
           this.hitTarget(tgt, st.dmg * this.dmgMult(), false);
+          this.snd("hit", tp, 0.7);
         }
       }
       return;
@@ -1537,6 +1589,8 @@ export class GameEngine {
         this.bossAggro = true;
         this.status = "fight";
         this.bossSlam = BOSS.slamEvery;
+        this.snd("bossAggro", this.bossGroup.position);
+        this.audio?.music("battle");
         this.cb.onBossAggro();
       }
       return;
@@ -1545,6 +1599,7 @@ export class GameEngine {
     // Everyone left: the boss resets.
     if (!party.some((u) => distXZ(u.group.position, home) < 20)) {
       this.bossAggro = false;
+      this.audio?.music("explore");
       this.status = "explore";
       this.bossHp = this.maxBossHp;
       this.clearTelegraph();
@@ -1580,6 +1635,7 @@ export class GameEngine {
         this.ring(c, "#c25b4a", BOSS.slamRadius + 1, 0.5);
         this.bossAnim.slam = 0;
         this.bossAnim.impact = 0.45;
+        this.snd("slamImpact", c);
         this.particles.burst(c.clone().setY(0.15), { count: 60, color: ["#8a6a42", "#a7a59d", "#6e5233"], speed: 7, up: 2.5, gravity: 7, life: 0.8, spread: 2.5, size: 0.2 });
         this.clearTelegraph();
       }
@@ -1627,6 +1683,7 @@ export class GameEngine {
   /* ---------------------------------------------------------- mechanics */
 
   private spawnShards(n: number) {
+    this.snd("shardSpawn", this.bossGroup.position);
     const [ax, az] = bossDef.arena;
     const base = Math.random() * Math.PI * 2;
     for (let i = 0; i < n; i++) {
@@ -1669,10 +1726,12 @@ export class GameEngine {
   private hitShard(sh: Shard, raw: number, big: boolean) {
     if (sh.hp <= 0) return;
     sh.hp -= raw;
+    this.snd("bossHit", sh.group.position, 0.45);
     this.float(sh.group.position.clone().setY(1.8), `${Math.round(raw)}`, big ? "crit" : "dmg");
     this.particles.burst(sh.group.position.clone().setY(0.9), { count: 4, color: ["#e0503c", "#a7a59d"], speed: 2.5, up: 2.5, life: 0.4, size: 0.1 });
     if (sh.hp <= 0) {
       this.ring(sh.group.position, "#e0503c", 1.6, 0.4);
+      this.snd("shardBreak", sh.group.position);
       this.particles.burst(sh.group.position.clone().setY(0.7), { count: 18, color: ["#6d6b63", "#e0503c", "#8c8a80"], speed: 4, up: 4, life: 0.8, size: 0.18 });
       this.removeShard(sh);
       this.emitHud();
@@ -1704,6 +1763,7 @@ export class GameEngine {
   }
 
   private throwBoulder() {
+    this.snd("boulderMark");
     const party = this.party();
     const priority: UnitKind[] = ["banner", "strategist", "quant", "builder", "engineer"];
     let target: Unit | undefined;
@@ -1734,7 +1794,7 @@ export class GameEngine {
     rock.position.copy(from);
     rock.visible = false; // thrown only once the zone is full
     this.scene.add(rock);
-    this.boulder = { target, at, from, t: 0, ring, fill, rock };
+    this.boulder = { target, at, from, t: 0, ring, fill, rock, launched: false };
     this.emitHud();
   }
 
@@ -1750,6 +1810,10 @@ export class GameEngine {
     // Phase 2: the boulder flies from the giant's hand to the zone.
     b.from.copy(this.bossGroup.position).setY(5.5);
     b.rock.visible = true;
+    if (!b.launched) {
+      b.launched = true;
+      this.snd("boulderLaunch", this.bossGroup.position);
+    }
     const k = Math.min(1, (b.t - BOULDER.fill) / BOULDER.flight);
     b.rock.position.lerpVectors(b.from, b.at.clone().setY(0.6), k);
     b.rock.position.y += Math.sin(k * Math.PI) * 4;
@@ -1759,6 +1823,7 @@ export class GameEngine {
       if (distXZ(u.group.position, b.at) <= BOULDER.radius) this.damage(u, DIFF[this.diff].boulderDmg);
     }
     this.ring(b.at, "#e0503c", BOULDER.radius + 1, 0.5);
+    this.snd("boulderImpact", b.at);
     this.particles.burst(b.at.clone().setY(0.2), { count: 34, color: ["#77756b", "#8a6a42", "#a7a59d"], speed: 5, up: 4.5, life: 0.9, spread: 1, size: 0.22 });
     this.clearBoulder();
   }
@@ -1839,6 +1904,7 @@ export class GameEngine {
   }
 
   private startTelegraph(at: THREE.Vector3) {
+    this.snd("slamWind", at, 1, BOSS.slamWindup);
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(BOSS.slamRadius - 0.25, BOSS.slamRadius, 48),
       new THREE.MeshBasicMaterial({ color: "#e0503c", transparent: true, opacity: 0.9, depthWrite: false }),
@@ -1875,6 +1941,7 @@ export class GameEngine {
     if (u.hp <= 0) return;
     const amt = Math.round(raw * DIFF[this.diff].incoming * (this.builderNear(u) ? 0.75 : 1));
     u.hp -= amt;
+    this.snd("hurt", u.group.position, 0.6);
     this.float(u.group.position, `-${amt}`, "hurt");
     this.particles.burst(u.group.position.clone().setY(1.1), { count: 4, color: ["#c25b4a", "#e0705c"], speed: 1.8, up: 2, life: 0.4, size: 0.09 });
     if (u.hp <= 0) {
@@ -1883,6 +1950,7 @@ export class GameEngine {
       this.scene.remove(u.group);
       this.selected.delete(u);
       u.ring.visible = false;
+      this.snd("death", u.group.position);
       if (u === this.hero) this.finish("lost");
       else this.fallen.push(u);
       this.emitHud();
@@ -1893,6 +1961,7 @@ export class GameEngine {
     if (this.bossDead) return;
     const amt = this.shards.length ? raw * STONE_SKIN : raw;
     this.bossHp -= amt;
+    this.snd("bossHit", this.bossGroup.position, 0.8);
     this.float(this.bossGroup.position.clone().setY(4), `${Math.round(amt)}`, this.shards.length ? "dmg" : big ? "crit" : "dmg");
     this.particles.burst(this.bossGroup.position.clone().setY(2.6), {
       count: big ? 10 : 4,
@@ -1943,6 +2012,7 @@ export class GameEngine {
     this.pendingAttackMove = false;
     this.canvas.style.cursor = "";
     this.emitHud();
+    this.audio?.music(result === "won" ? "victory" : "defeat");
     this.cb.onEnd(result);
   }
 
@@ -1998,16 +2068,16 @@ export class GameEngine {
     });
   }
 
-  private float(at: THREE.Vector3, text: string, kind: "dmg" | "crit" | "hurt" | "heal") {
+  private float(at: THREE.Vector3, text: string, kind: "dmg" | "crit" | "hurt" | "heal" | "bark") {
     if (this.floaters.length > 40) return;
     const el = document.createElement("div");
     el.textContent = text;
     el.className = `floater floater-${kind}`;
     this.overlay.appendChild(el);
     const pos = at.clone();
-    pos.x += (Math.random() - 0.5) * 0.8;
+    if (kind !== "bark") pos.x += (Math.random() - 0.5) * 0.8;
     pos.y = Math.max(pos.y, 2.2);
-    this.floaters.push({ el, pos, age: 0 });
+    this.floaters.push({ el, pos, age: 0, life: kind === "bark" ? 1.8 : 0.9, rise: kind === "bark" ? 0.25 : 1.6 });
   }
 
   private updateFloaters(dt: number) {
@@ -2015,14 +2085,15 @@ export class GameEngine {
     const h = this.canvas.clientHeight;
     this.floaters = this.floaters.filter((f) => {
       f.age += dt;
-      f.pos.y += dt * 1.6;
-      if (f.age > 0.9) {
+      f.pos.y += dt * f.rise;
+      if (f.age > f.life) {
         f.el.remove();
         return false;
       }
       const p = f.pos.clone().project(this.camera);
       f.el.style.transform = `translate(${((p.x + 1) / 2) * w}px, ${((1 - p.y) / 2) * h}px) translate(-50%, -50%)`;
-      f.el.style.opacity = String(1 - f.age / 0.9);
+      const k = f.age / f.life;
+      f.el.style.opacity = String(k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4);
       return true;
     });
   }
