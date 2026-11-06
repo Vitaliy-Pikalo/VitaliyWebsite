@@ -49,10 +49,19 @@ Vitaliy auto-attacks; the player only presses abilities. Each comes from a proje
 
 Left-clicking the ground moves units (WC3 only uses right-click) so first-time players can play without knowing RTS controls.
 
+### Sound
+
+All audio is generated in the browser with the Web Audio API; there are no audio files and nothing to license.
+
+- Effects (`lib/game/audio.ts`): 24 synthesized sounds for orders, combat, abilities, the slam, the boulder strike, and shards. They pan with screen position and play quieter off-screen.
+- Music (`lib/game/music.ts`): an original score with an exploration loop, a battle loop when the giant wakes, and victory/defeat stingers.
+- Unit voices: each unit has select and order lines (`barks` in `story.ts`). They show as speech bubbles; spoken lines use the browser's speech engine and are off by default.
+- Audio starts on the first click or key press (browser autoplay rules). The top bar toggles all sound; the Controls panel has Sound, Music, and Unit voices, saved per browser.
+
 ## Editing content
 
 - Site copy: `lib/content.ts`. Every experience entry needs a `period` (dates).
-- Game story: `lib/game/story.ts` (shrine chapters, recruits, abilities, boss text).
+- Game story: `lib/game/story.ts` (shrine chapters, recruits, abilities, boss text, unit barks).
 - Game balance: unit stats in `lib/game/units.ts`; `BOSS`, `DIFF`, `SHARD`, `BOULDER`, and `ABILITY` at the top of `lib/game/engine.ts`.
 - Resume: replace `public/Vitaliy_Pikalo_resume.pdf`.
 
@@ -73,9 +82,13 @@ components/
 lib/
   content.ts        site copy
   game/engine.ts    three.js world, units, orders, combat, camera
+  game/models.ts    procedural low-poly models
+  game/fx.ts        pooled particles and effects
   game/nav.ts       grid A* pathfinding
   game/units.ts     unit stats
   game/story.ts     campaign script
+  game/audio.ts     synthesized sound effects, mixer, settings
+  game/music.ts     procedural score
 ```
 
 ## Development
