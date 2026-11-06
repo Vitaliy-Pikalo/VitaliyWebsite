@@ -13,8 +13,8 @@ const config: Config = {
         foreground: "var(--foreground)",
       },
       fontFamily: {
-        sans: ["var(--font-inter)", "system-ui", "sans-serif"],
-        display: ["var(--font-space-grotesk)", "system-ui", "sans-serif"],
+        sans: ["\"Inter Variable\"", "system-ui", "sans-serif"],
+        display: ["Cinzel", "Georgia", "serif"],
       },
       animation: {
         "ticker": "ticker 30s linear infinite",

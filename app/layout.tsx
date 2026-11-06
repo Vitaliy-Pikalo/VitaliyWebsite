@@ -1,18 +1,8 @@
 import type { Metadata } from "next";
-import { Inter, Space_Grotesk } from "next/font/google";
+import "@fontsource-variable/inter";
+import "@fontsource/cinzel/600.css";
+import "@fontsource/cinzel/700.css";
 import "./globals.css";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-});
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space-grotesk",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "Vitaliy Pikalo | Computer Engineering Student • Builder • Competitor",
@@ -26,7 +16,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="scroll-smooth">
-      <body className={`${inter.variable} ${spaceGrotesk.variable} antialiased`}>
+      <body className="antialiased">
         {/* Netflix-style film grain overlay */}
         <div className="grain-overlay" aria-hidden />
         {children}
