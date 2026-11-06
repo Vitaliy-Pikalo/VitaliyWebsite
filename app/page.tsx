@@ -58,6 +58,18 @@ export default function Home() {
               <p className="mt-3 text-lg font-medium text-bone/90 sm:text-xl">{profile.role}</p>
               <p className="mt-4 max-w-sm leading-normal">{profile.tagline}</p>
               <SideNav />
+
+              <a
+                href="/play"
+                className="stone-tablet group mt-10 block max-w-sm px-5 py-4 transition-colors hover:border-gold lg:mt-14"
+              >
+                <p className="font-display text-base font-semibold tracking-wide text-gold-bright">
+                  Play the campaign
+                </p>
+                <p className="mt-1 text-sm leading-snug">
+                  My story as a short strategy game inspired by Warcraft III. Recruit a warband, beat the Final Round, win the resume. About five minutes.
+                </p>
+              </a>
             </div>
 
             <div className="mt-10 lg:mt-0">
