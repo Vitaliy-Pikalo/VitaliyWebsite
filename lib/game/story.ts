@@ -83,6 +83,7 @@ export const shrines: Shrine[] = [
     lines: [
       "My Kalshi bot paper-trades prediction markets against the live API. It has logged 270,000+ market snapshots and 13,000+ predictions.",
       "Its best lesson: an early profit turned out to be sampling variance. So I added calibration analysis, and now the bot measures how much its own odds can be trusted.",
+      "That lesson became a research pipeline built to catch false discoveries. I ran 78 trials across FX carry, 13F copycat investing, and Fed Beige Book sentiment, and published that none of them held up.",
     ],
     recruit: "quant",
     recruitName: "Quant Archer",
@@ -96,6 +97,7 @@ export const shrines: Shrine[] = [
     lines: [
       "As an equity analyst at the Intrieri Family Student Managed Fund, I helped manage a live $1.6M portfolio under CFA standards.",
       "I also led a four-person freelance team that shipped 10+ booking apps for local businesses, and I lectured 100+ students on AI tools as a TA.",
+      "Now I'm building Pikalo, which explains U.S. taxes and investing to immigrants and first-time filers, with every answer tied to an IRS source.",
     ],
     recruit: "banner",
     recruitName: "Banner Bearer",
@@ -107,7 +109,7 @@ export const shrines: Shrine[] = [
     id: "outpost",
     title: "The Open Outpost",
     lines: [
-      "I contribute to open source. I've had pull requests merged into marimo, so its audio player accepts PyTorch and JAX arrays, and into lancedb, which now gives a clear error instead of an opaque one.",
+      "I contribute to open source, with pull requests merged into statsmodels, marimo, and lancedb: a wrong statistical derivative, an audio player that now takes PyTorch and JAX arrays, and an opaque error made clear.",
       "Off the keyboard: varsity tennis, a 17-0 singles season, and an AMCC conference title. Competing taught me to keep my head in long matches.",
     ],
     recruit: "builder",
