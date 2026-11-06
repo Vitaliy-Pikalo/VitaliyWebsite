@@ -1,21 +1,39 @@
 import * as THREE from "three";
+import { NavGrid, type Point } from "./nav";
 import { boss as bossDef, shrines, type Shrine, type UnitKind } from "./story";
 
 /* ------------------------------------------------------------------ types */
 
 export type Status = "explore" | "fight" | "won" | "lost";
+export type OrderType = "idle" | "follow" | "move" | "attackMove" | "attack" | "hold";
+
+export type UnitInfo = { id: number; kind: UnitKind; hp: number; max: number; order: OrderType; selected: boolean };
+
+export type MinimapState = {
+  units: { x: number; z: number; kind: UnitKind; selected: boolean }[];
+  boss: { x: number; z: number; alive: boolean };
+  shrines: { x: number; z: number; visited: boolean; color: string }[];
+  view: Point[]; // camera footprint on the ground, 4 corners
+};
 
 export type HudState = {
   heroHp: number;
   heroMax: number;
-  warband: { kind: UnitKind; hp: number; max: number }[];
+  warband: UnitInfo[]; // recruits, in recruit order
+  selection: UnitInfo[];
   bossHp: number;
   bossMax: number;
   bossAggro: boolean;
   deployCd: number;
   rallyCd: number;
   status: Status;
+  pendingAttackMove: boolean;
+  followCamera: boolean;
+  groups: number[];
+  minimap: MinimapState;
 };
+
+export type MapInfo = { half: number; road: Point[]; arena: { x: number; z: number; r: number } };
 
 export type EngineCallbacks = {
   onHud: (s: HudState) => void;
@@ -38,7 +56,7 @@ type Stats = {
   crit?: number;
 };
 
-const STATS: Record<UnitKind, Stats> = {
+export const STATS: Record<UnitKind, Stats> = {
   hero: { hp: 420, dmg: 20, cd: 1.0, range: 1.6, speed: 6.2, body: "#2f4f8f", trim: "#c9a24a", scale: 1.15 },
   engineer: { hp: 540, dmg: 14, cd: 1.0, range: 1.5, speed: 5.4, body: "#5d6b4a", trim: "#7e9a63", scale: 1.1 },
   strategist: { hp: 230, dmg: 34, cd: 1.9, range: 7, speed: 5.0, body: "#3b5a86", trim: "#8fb3e0", scale: 0.95, ranged: true },
@@ -51,23 +69,33 @@ const BOSS = { hp: 2600, dmg: 44, cd: 1.6, radius: 1.7, speed: 3.4, slamEvery: 6
 const DEPLOY = { cd: 8, radius: 5, dmg: 150 };
 const RALLY = { cd: 15, frac: 0.35 };
 const MAP = 40;
+const ACQUIRE = 9; // idle units engage the boss inside this distance
+const UNIT_RADIUS = 0.45;
 
 type Unit = {
+  id: number;
   kind: UnitKind;
   group: THREE.Group;
   hp: number;
   max: number;
-  atk: number; // attack timer
-  move: THREE.Vector3 | null;
+  atk: number;
+  order: OrderType;
+  path: THREE.Vector3[];
+  repath: number;
   slot: THREE.Vector3;
   hpBar: THREE.Group;
   hpFill: THREE.Mesh;
+  ring: THREE.Mesh;
   bob: number;
 };
 
-type Projectile = { mesh: THREE.Mesh; target: "boss" | Unit; dmg: number; crit: boolean; speed: number };
+type Projectile = { mesh: THREE.Mesh; dmg: number; crit: boolean; speed: number };
 type Fx = { mesh: THREE.Mesh; age: number; life: number; grow: number };
 type Floater = { el: HTMLDivElement; pos: THREE.Vector3; age: number };
+type Drag =
+  | { kind: "box"; x0: number; y0: number; x1: number; y1: number; active: boolean; shift: boolean }
+  | { kind: "pan"; x: number; y: number; moved: number; pointerType: string }
+  | null;
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -88,7 +116,7 @@ function v2(x: number, z: number) {
   return new THREE.Vector3(x, 0, z);
 }
 
-function distXZ(a: THREE.Vector3, b: THREE.Vector3) {
+function distXZ(a: { x: number; z: number }, b: { x: number; z: number }) {
   return Math.hypot(a.x - b.x, a.z - b.z);
 }
 
@@ -102,9 +130,23 @@ export class GameEngine {
   private raf = 0;
   private view = 26;
   private camTarget = new THREE.Vector3();
+  private followCam = true;
+  private keysHeld = new Set<string>();
+  private mouse: { x: number; y: number; inside: boolean } = { x: 0, y: 0, inside: false };
+
+  private nav = new NavGrid(MAP + 4, 1);
+  private roadPts: THREE.Vector3[] = [];
+  private nextId = 1;
 
   private hero!: Unit;
   private allies: Unit[] = [];
+  private selected = new Set<Unit>();
+  private groups = new Map<number, Unit[]>();
+  private lastGroupTap = { n: -1, t: 0 };
+  private pendingAttackMove = false;
+  private drag: Drag = null;
+  private boxEl: HTMLDivElement;
+
   private bossGroup!: THREE.Group;
   private bossHp = BOSS.hp;
   private bossAtk = 0;
@@ -149,32 +191,57 @@ export class GameEngine {
     this.addLights();
     this.buildWorld();
     this.hero = this.spawn("hero", v2(0, 32), new THREE.Vector3());
+    this.hero.order = "idle";
+    this.setSelection([this.hero]);
     this.camTarget.copy(this.hero.group.position);
 
     this.marker = new THREE.Mesh(
       new THREE.RingGeometry(0.45, 0.65, 32),
-      new THREE.MeshBasicMaterial({ color: "#e3c06a", transparent: true, opacity: 0, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: "#7cd16b", transparent: true, opacity: 0, depthWrite: false }),
     );
     this.marker.rotation.x = -Math.PI / 2;
     this.marker.position.y = 0.17;
     this.scene.add(this.marker);
 
+    this.boxEl = document.createElement("div");
+    this.boxEl.className = "select-box";
+    this.boxEl.style.display = "none";
+    overlay.appendChild(this.boxEl);
+
     this.resizeObs = new ResizeObserver(() => this.resize());
     this.resizeObs.observe(canvas.parentElement ?? canvas);
     this.resize();
 
-    canvas.addEventListener("pointerdown", this.onPointer);
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    window.addEventListener("pointermove", this.onPointerMove);
+    window.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("pointerleave", this.onPointerLeave);
     canvas.addEventListener("contextmenu", this.onContext);
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
-    window.addEventListener("keydown", this.onKey);
+    window.addEventListener("keydown", this.onKeyDown);
+    window.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("blur", this.onBlur);
 
     this.loop();
   }
 
   /* ------------------------------------------------------------ public api */
 
+  get mapInfo(): MapInfo {
+    return {
+      half: MAP + 4,
+      road: this.roadPts.map((p) => ({ x: p.x, z: p.z })),
+      arena: { x: bossDef.arena[0], z: bossDef.arena[1], r: 12 },
+    };
+  }
+
   setPaused(p: boolean) {
     this.paused = p;
+    if (p) {
+      this.drag = null;
+      this.boxEl.style.display = "none";
+      this.keysHeld.clear();
+    }
   }
 
   recruitFrom(shrineId: string) {
@@ -187,25 +254,26 @@ export class GameEngine {
       m.glow.visible = false;
     }
     const slots = [v2(-1.8, 1.8), v2(1.8, 1.8), v2(-1.8, 3.6), v2(1.8, 3.6), v2(0, 3.2)];
-    const unit = this.spawn(s.recruit, v2(s.at[0] + 1.5, s.at[1] + 1.5), slots[this.allies.length % slots.length]);
+    const at = this.nav.nearestOpen({ x: s.at[0] + 2.2, z: s.at[1] + 2.2 });
+    const unit = this.spawn(s.recruit, v2(at.x, at.z), slots[this.allies.length % slots.length]);
     this.allies.push(unit);
     this.ring(unit.group.position, s.rune, 3, 0.8);
-    this.emitHud(true);
+    this.emitHud();
   }
 
   deploy() {
-    if (this.deployCd > 0 || this.status === "won" || this.status === "lost" || this.paused) return;
+    if (this.deployCd > 0 || this.over() || this.paused || this.hero.hp <= 0) return;
     this.deployCd = DEPLOY.cd;
     const p = this.hero.group.position;
     this.ring(p, "#e3c06a", DEPLOY.radius, 0.6);
     if (this.bossAggro && !this.bossDead && distXZ(p, this.bossGroup.position) <= DEPLOY.radius + BOSS.radius) {
       this.hitBoss(DEPLOY.dmg, true);
     }
-    this.emitHud(true);
+    this.emitHud();
   }
 
   rally() {
-    if (this.rallyCd > 0 || this.status === "won" || this.status === "lost" || this.paused) return;
+    if (this.rallyCd > 0 || this.over() || this.paused || this.hero.hp <= 0) return;
     this.rallyCd = RALLY.cd;
     for (const u of this.party()) {
       const amt = Math.round(u.max * RALLY.frac);
@@ -213,28 +281,86 @@ export class GameEngine {
       this.ring(u.group.position, "#7e9a63", 1.6, 0.6);
       this.float(u.group.position, `+${amt}`, "heal");
     }
-    this.emitHud(true);
+    this.emitHud();
   }
 
-  /** Test hook: order the hero to walk to a world position. */
-  debugMoveTo(x: number, z: number) {
-    this.hero.move = v2(x, z);
+  /** Commands for the HUD's command card. */
+  command(type: "stop" | "hold" | "attackMove" | "cancel") {
+    if (this.paused || this.over()) return;
+    const units = this.selectedAlive();
+    if (type === "attackMove") {
+      this.pendingAttackMove = units.length > 0;
+      this.canvas.style.cursor = this.pendingAttackMove ? "crosshair" : "";
+    } else if (type === "cancel") {
+      this.pendingAttackMove = false;
+      this.canvas.style.cursor = "";
+    } else {
+      for (const u of units) {
+        u.order = type === "stop" ? "idle" : "hold";
+        u.path = [];
+      }
+    }
+    this.emitHud();
   }
 
-  /** Test hook: read positions and status. */
-  debugState() {
-    return { hero: this.hero.group.position.toArray(), status: this.status, bossHp: this.bossHp, allies: this.allies.length, paused: this.paused };
+  selectAll() {
+    this.setSelection(this.party());
+  }
+
+  selectHero(center = false) {
+    if (this.hero.hp <= 0) return;
+    this.setSelection([this.hero]);
+    if (center) this.followCam = true;
+  }
+
+  /** Select one unit by id; with `add`, toggle it in the current selection. */
+  selectUnit(id: number, add = false) {
+    const u = this.party().find((x) => x.id === id);
+    if (!u) return;
+    if (add) {
+      const next = new Set(this.selected);
+      if (next.has(u)) next.delete(u);
+      else next.add(u);
+      this.setSelection([...next]);
+    } else {
+      this.setSelection([u]);
+    }
+  }
+
+  centerOnSelection() {
+    this.followCam = true;
+    this.emitHud();
+  }
+
+  /** Move the camera to a world point (minimap click). */
+  focus(x: number, z: number) {
+    this.followCam = false;
+    this.camTarget.set(THREE.MathUtils.clamp(x, -MAP, MAP), 0, THREE.MathUtils.clamp(z, -MAP, MAP));
+    this.emitHud();
+  }
+
+  /** Order the selection to a world point (minimap right-click). */
+  orderTo(x: number, z: number) {
+    if (this.paused || this.over()) return;
+    this.issueMove(v2(x, z), this.pendingAttackMove);
+    this.command("cancel");
   }
 
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     this.resizeObs.disconnect();
-    this.canvas.removeEventListener("pointerdown", this.onPointer);
+    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+    window.removeEventListener("pointermove", this.onPointerMove);
+    window.removeEventListener("pointerup", this.onPointerUp);
+    this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
     this.canvas.removeEventListener("contextmenu", this.onContext);
     this.canvas.removeEventListener("wheel", this.onWheel);
-    window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("keydown", this.onKeyDown);
+    window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("blur", this.onBlur);
     this.floaters.forEach((f) => f.el.remove());
+    this.boxEl.remove();
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh || o instanceof THREE.InstancedMesh) {
         o.geometry.dispose();
@@ -245,9 +371,47 @@ export class GameEngine {
     this.renderer.dispose();
   }
 
+  /* ----------------------------------------------------------- test hooks */
+
+  /** Order the hero alone to walk to a world position. */
+  debugMoveTo(x: number, z: number) {
+    this.order([this.hero], v2(x, z), "move");
+  }
+
+  debugState() {
+    return {
+      hero: this.hero.group.position.toArray(),
+      status: this.status,
+      bossHp: this.bossHp,
+      allies: this.allies.length,
+      paused: this.paused,
+      selected: [...this.selected].map((u) => u.kind),
+      units: this.party().map((u) => ({ kind: u.kind, x: u.group.position.x, z: u.group.position.z, order: u.order })),
+      followCam: this.followCam,
+      cam: [this.camTarget.x, this.camTarget.z],
+    };
+  }
+
+  /** Screen position (CSS pixels, relative to the canvas) of a world point. */
+  debugProject(x: number, y: number, z: number) {
+    const p = new THREE.Vector3(x, y, z).project(this.camera);
+    return { x: ((p.x + 1) / 2) * this.canvas.clientWidth, y: ((1 - p.y) / 2) * this.canvas.clientHeight };
+  }
+
+  /** Number of units currently standing inside a blocked nav cell. */
+  debugUnitsInObstacles() {
+    return this.party().filter((u) => this.nav.isBlocked(u.group.position.x, u.group.position.z)).length;
+  }
+
   /* ---------------------------------------------------------------- input */
 
+  private over() {
+    return this.status === "won" || this.status === "lost";
+  }
+
   private onContext = (e: Event) => e.preventDefault();
+
+  private onBlur = () => this.keysHeld.clear();
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
@@ -255,29 +419,299 @@ export class GameEngine {
     this.resize();
   };
 
-  private onKey = (e: KeyboardEvent) => {
-    if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA", "BUTTON"].includes(e.target.tagName) && e.key === " ") return;
-    const k = e.key.toLowerCase();
-    if (k === "q") this.deploy();
-    else if (k === "w") this.rally();
-    else if (k === "s") this.hero.move = null;
+  private local(e: { clientX: number; clientY: number }) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  private onPointerDown = (e: PointerEvent) => {
+    if (this.paused || this.over()) return;
+    const p = this.local(e);
+    if (e.pointerType === "touch") {
+      this.drag = { kind: "pan", x: p.x, y: p.y, moved: 0, pointerType: "touch" };
+      return;
+    }
+    if (e.button === 1) {
+      e.preventDefault();
+      this.drag = { kind: "pan", x: p.x, y: p.y, moved: 0, pointerType: "mouse" };
+    } else if (e.button === 0) {
+      this.drag = { kind: "box", x0: p.x, y0: p.y, x1: p.x, y1: p.y, active: false, shift: e.shiftKey };
+    } else if (e.button === 2) {
+      this.rightClick(p);
+    }
   };
 
-  private onPointer = (e: PointerEvent) => {
-    if (this.paused || this.status === "won" || this.status === "lost") return;
-    const rect = this.canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  private onPointerMove = (e: PointerEvent) => {
+    const p = this.local(e);
+    if (e.pointerType === "mouse") {
+      this.mouse = { x: p.x, y: p.y, inside: p.x >= 0 && p.y >= 0 && p.x <= this.canvas.clientWidth && p.y <= this.canvas.clientHeight };
+    }
+    const d = this.drag;
+    if (!d) return;
+    if (d.kind === "pan") {
+      const dx = p.x - d.x;
+      const dy = p.y - d.y;
+      d.moved += Math.abs(dx) + Math.abs(dy);
+      if (d.pointerType !== "touch" || d.moved > 10) this.panPixels(dx, dy);
+      d.x = p.x;
+      d.y = p.y;
+    } else {
+      d.x1 = p.x;
+      d.y1 = p.y;
+      if (!d.active && Math.hypot(d.x1 - d.x0, d.y1 - d.y0) > 6) d.active = true;
+      if (d.active) {
+        Object.assign(this.boxEl.style, {
+          display: "block",
+          left: `${Math.min(d.x0, d.x1)}px`,
+          top: `${Math.min(d.y0, d.y1)}px`,
+          width: `${Math.abs(d.x1 - d.x0)}px`,
+          height: `${Math.abs(d.y1 - d.y0)}px`,
+        });
+      }
+    }
+  };
+
+  private onPointerUp = (e: PointerEvent) => {
+    const d = this.drag;
+    this.drag = null;
+    this.boxEl.style.display = "none";
+    if (!d || this.paused || this.over()) return;
+    if (d.kind === "pan") {
+      if (d.pointerType === "touch" && d.moved <= 10) this.leftClick(this.local(e), false);
+      return;
+    }
+    if (d.active) this.boxSelect(d.x0, d.y0, d.x1, d.y1, d.shift);
+    else this.leftClick({ x: d.x0, y: d.y0 }, d.shift);
+  };
+
+  private onPointerLeave = () => {
+    this.mouse.inside = false;
+  };
+
+  private onKeyDown = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+    if (this.paused) return;
+    const k = e.key.toLowerCase();
+
+    if (k.startsWith("arrow")) {
+      e.preventDefault();
+      this.keysHeld.add(k);
+      this.followCam = false;
+      return;
+    }
+    if (/^[1-9]$/.test(k)) {
+      const n = Number(k);
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const units = this.selectedAlive();
+        if (units.length) this.groups.set(n, units);
+      } else {
+        const g = (this.groups.get(n) ?? []).filter((u) => u.hp > 0);
+        if (g.length) {
+          this.setSelection(g);
+          const now = performance.now();
+          if (this.lastGroupTap.n === n && now - this.lastGroupTap.t < 350) this.followCam = true;
+          this.lastGroupTap = { n, t: now };
+        }
+      }
+      this.emitHud();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && k === "a") {
+      e.preventDefault();
+      this.selectAll();
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    switch (k) {
+      case "q":
+        this.deploy();
+        break;
+      case "w":
+        this.rally();
+        break;
+      case "a":
+        this.command("attackMove");
+        break;
+      case "s":
+        this.command("stop");
+        break;
+      case "h":
+        this.command("hold");
+        break;
+      case "escape":
+        this.command("cancel");
+        break;
+      case "`":
+        this.selectAll();
+        break;
+      case "f1":
+        e.preventDefault();
+        this.selectHero(true);
+        break;
+      case " ":
+        if (t && t.tagName === "BUTTON") return;
+        e.preventDefault();
+        this.centerOnSelection();
+        break;
+    }
+  };
+
+  private onKeyUp = (e: KeyboardEvent) => {
+    this.keysHeld.delete(e.key.toLowerCase());
+  };
+
+  private groundAt(p: { x: number; y: number }) {
+    const ndc = new THREE.Vector2((p.x / this.canvas.clientWidth) * 2 - 1, -(p.y / this.canvas.clientHeight) * 2 + 1);
     const ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
     const hit = new THREE.Vector3();
-    if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit)) return;
+    if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit)) return null;
     hit.x = THREE.MathUtils.clamp(hit.x, -MAP, MAP);
     hit.z = THREE.MathUtils.clamp(hit.z, -MAP, MAP);
-    this.hero.move = hit.clone();
-    this.marker.position.set(hit.x, 0.17, hit.z);
-    (this.marker.material as THREE.MeshBasicMaterial).opacity = 1;
+    return hit;
+  }
+
+  private screenOf(v: THREE.Vector3, y: number) {
+    const p = v.clone().setY(y).project(this.camera);
+    return { x: ((p.x + 1) / 2) * this.canvas.clientWidth, y: ((1 - p.y) / 2) * this.canvas.clientHeight };
+  }
+
+  private pixelsPerUnit() {
+    return this.canvas.clientWidth / (this.camera.right - this.camera.left);
+  }
+
+  private pickUnit(p: { x: number; y: number }) {
+    const radius = Math.max(16, 0.9 * this.pixelsPerUnit());
+    let best: Unit | null = null;
+    let bestD = Infinity;
+    for (const u of this.party()) {
+      const s = this.screenOf(u.group.position, 0.9);
+      const d = Math.hypot(s.x - p.x, s.y - p.y);
+      if (d < radius && d < bestD) {
+        best = u;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  private pickBoss(p: { x: number; y: number }) {
+    if (this.bossDead) return false;
+    const s = this.screenOf(this.bossGroup.position, 2.8);
+    return Math.hypot(s.x - p.x, s.y - p.y) < 2.6 * this.pixelsPerUnit();
+  }
+
+  private leftClick(p: { x: number; y: number }, shift: boolean) {
+    if (this.pendingAttackMove) {
+      if (this.pickBoss(p)) this.issueAttack();
+      else {
+        const g = this.groundAt(p);
+        if (g) this.issueMove(g, true);
+      }
+      this.command("cancel");
+      return;
+    }
+    const u = this.pickUnit(p);
+    if (u) {
+      this.selectUnit(u.id, shift);
+      return;
+    }
+    if (this.pickBoss(p)) {
+      this.issueAttack();
+      return;
+    }
+    const g = this.groundAt(p);
+    if (g) this.issueMove(g, false);
+  }
+
+  private rightClick(p: { x: number; y: number }) {
+    if (this.pendingAttackMove) this.command("cancel");
+    if (this.pickBoss(p)) {
+      this.issueAttack();
+      return;
+    }
+    const g = this.groundAt(p);
+    if (g) this.issueMove(g, false);
+  }
+
+  private boxSelect(x0: number, y0: number, x1: number, y1: number, add: boolean) {
+    const [l, r] = [Math.min(x0, x1), Math.max(x0, x1)];
+    const [t, b] = [Math.min(y0, y1), Math.max(y0, y1)];
+    const inside = this.party().filter((u) => {
+      const s = this.screenOf(u.group.position, 0.9);
+      return s.x >= l && s.x <= r && s.y >= t && s.y <= b;
+    });
+    if (!inside.length) return;
+    this.setSelection(add ? [...new Set([...this.selected, ...inside])] : inside);
+  }
+
+  private setSelection(units: Unit[]) {
+    this.selected = new Set(units.filter((u) => u.hp > 0));
+    for (const u of [this.hero, ...this.allies]) u.ring.visible = this.selected.has(u);
+    this.emitHud();
+  }
+
+  private selectedAlive() {
+    return [...this.selected].filter((u) => u.hp > 0);
+  }
+
+  /* --------------------------------------------------------------- orders */
+
+  private issueMove(point: THREE.Vector3, attackMove: boolean) {
+    const units = this.selectedAlive();
+    if (!units.length) return;
+    this.order(units, point, attackMove ? "attackMove" : "move");
+    this.flashMarker(point, attackMove ? "#e0705c" : "#7cd16b");
+  }
+
+  private issueAttack() {
+    const units = this.selectedAlive();
+    if (!units.length) return;
+    for (const u of units) {
+      u.order = "attack";
+      u.path = [];
+      u.repath = 0;
+    }
+    this.flashMarker(this.bossGroup.position.clone(), "#e0705c");
+    this.emitHud();
+  }
+
+  /** Spread units over slots around the point, nearest unit to nearest slot. */
+  private order(units: Unit[], point: THREE.Vector3, type: "move" | "attackMove") {
+    const slots: THREE.Vector3[] = [point.clone()];
+    for (let ring = 1; slots.length < units.length; ring++) {
+      const n = ring * 6;
+      for (let i = 0; i < n && slots.length < units.length; i++) {
+        const a = (i / n) * Math.PI * 2;
+        slots.push(new THREE.Vector3(point.x + Math.cos(a) * ring * 1.3, 0, point.z + Math.sin(a) * ring * 1.3));
+      }
+    }
+    const free = [...slots];
+    const sorted = [...units].sort((a, b) => distXZ(a.group.position, point) - distXZ(b.group.position, point));
+    for (const u of sorted) {
+      free.sort((a, b) => distXZ(u.group.position, a) - distXZ(u.group.position, b));
+      const slot = free.shift()!;
+      u.order = type;
+      this.setPath(u, slot);
+    }
+    this.emitHud();
+  }
+
+  private setPath(u: Unit, goal: { x: number; z: number }) {
+    const pts = this.nav.findPath({ x: u.group.position.x, z: u.group.position.z }, goal);
+    u.path = pts.map((p) => v2(p.x, p.z));
+  }
+
+  private flashMarker(at: THREE.Vector3, color: string) {
+    this.marker.position.set(at.x, 0.17, at.z);
+    const m = this.marker.material as THREE.MeshBasicMaterial;
+    m.color.set(color);
+    m.opacity = 1;
     this.marker.scale.setScalar(1.4);
-  };
+  }
 
   /* ---------------------------------------------------------------- world */
 
@@ -295,7 +729,6 @@ export class GameEngine {
   private buildWorld() {
     const rand = rng(1997);
 
-    // Ground with a slightly uneven, flat-shaded surface.
     const groundGeo = new THREE.PlaneGeometry(MAP * 2 + 20, MAP * 2 + 20, 60, 60);
     const pos = groundGeo.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < pos.count; i++) pos.setZ(i, (rand() - 0.5) * 0.14);
@@ -309,6 +742,7 @@ export class GameEngine {
     const route = [v2(0, 34), ...shrines.map((s) => v2(s.at[0], s.at[1])), v2(bossDef.arena[0], bossDef.arena[1] + 10)];
     const curve = new THREE.CatmullRomCurve3(route);
     const roadPts = curve.getSpacedPoints(160);
+    this.roadPts = roadPts;
     const dirt = new THREE.InstancedMesh(new THREE.CircleGeometry(2.1, 12), flat("#8a6a42"), roadPts.length);
     const m4 = new THREE.Matrix4();
     roadPts.forEach((p, i) => {
@@ -331,10 +765,13 @@ export class GameEngine {
       if (Math.abs(a - Math.PI / 2) < 0.4) continue; // gap facing the road
       const h = 2.2 + rand() * 1.6;
       const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.1, h, 1.1), flat("#6d6b63"));
-      pillar.position.set(ax + Math.cos(a) * 12.5, h / 2, az + Math.sin(a) * 12.5);
+      const px = ax + Math.cos(a) * 12.5;
+      const pz = az + Math.sin(a) * 12.5;
+      pillar.position.set(px, h / 2, pz);
       pillar.rotation.y = rand();
       pillar.castShadow = true;
       this.scene.add(pillar);
+      this.nav.blockCircle(px, pz, 0.8 + UNIT_RADIUS);
     }
 
     // Forest: instanced trees and rocks, kept off the road and away from the arena.
@@ -357,6 +794,8 @@ export class GameEngine {
       trunks.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.6 * s, z), q, sc));
       lower.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 2.0 * s, z), q, sc));
       upper.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 3.1 * s, z), q, sc));
+      // Units can brush the canopy but not walk through the trunk.
+      this.nav.blockCircle(x, z, 0.55 * s + UNIT_RADIUS);
     });
     [trunks, lower, upper].forEach((t) => {
       t.castShadow = true;
@@ -373,6 +812,7 @@ export class GameEngine {
       }
       const s = 0.5 + rand() * 1.1;
       rocks.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 0.15 * s, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rand(), rand(), rand())), new THREE.Vector3(s, s * 0.7, s)));
+      this.nav.blockCircle(x, z, 0.42 * s + UNIT_RADIUS * 0.6);
     }
     rocks.castShadow = true;
     this.scene.add(rocks);
@@ -400,6 +840,7 @@ export class GameEngine {
       g.position.set(s.at[0], 0, s.at[1]);
       this.scene.add(g);
       this.shrineMeshes.set(s.id, { rune, glow });
+      this.nav.blockCircle(s.at[0], s.at[1], 1.6 + UNIT_RADIUS * 0.5);
     }
 
     this.buildBoss();
@@ -471,11 +912,11 @@ export class GameEngine {
     add(new THREE.BoxGeometry(0.62, 0.9, 0.06), trim, 0, 0.85, -0.3, 0.15); // cape
 
     if (kind === "hero") {
-      add(new THREE.ConeGeometry(0.3, 0.35, 6), trim, 0, 1.82, 0); // helm
-      add(new THREE.BoxGeometry(0.1, 1.1, 0.1), flat("#d8d8d8"), 0.55, 0.9, 0.2); // sword
+      add(new THREE.ConeGeometry(0.3, 0.35, 6), trim, 0, 1.82, 0);
+      add(new THREE.BoxGeometry(0.1, 1.1, 0.1), flat("#d8d8d8"), 0.55, 0.9, 0.2);
     } else if (kind === "engineer") {
-      add(new THREE.BoxGeometry(0.12, 0.7, 0.55), trim, -0.5, 0.85, 0.15); // shield
-      add(new THREE.BoxGeometry(0.4, 0.25, 0.12), flat("#9a9a9a"), 0.5, 0.95, 0.25); // hammer
+      add(new THREE.BoxGeometry(0.12, 0.7, 0.55), trim, -0.5, 0.85, 0.15);
+      add(new THREE.BoxGeometry(0.4, 0.25, 0.12), flat("#9a9a9a"), 0.5, 0.95, 0.25);
     } else if (kind === "strategist") {
       add(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 5), flat("#6b4a2a"), 0.45, 0.9, 0.1);
       add(new THREE.OctahedronGeometry(0.15), flat(st.trim, { emissive: st.trim, emissiveIntensity: 1 }), 0.45, 1.75, 0.1);
@@ -485,9 +926,18 @@ export class GameEngine {
       add(new THREE.CylinderGeometry(0.04, 0.04, 2.0, 5), flat("#6b4a2a"), 0.4, 1.1, -0.1);
       add(new THREE.BoxGeometry(0.02, 0.55, 0.4), trim, 0.42, 1.8, 0.1);
     } else if (kind === "builder") {
-      add(new THREE.BoxGeometry(0.5, 0.5, 0.35), flat("#7a5c3a"), 0, 1.0, -0.4); // pack
+      add(new THREE.BoxGeometry(0.5, 0.5, 0.35), flat("#7a5c3a"), 0, 1.0, -0.4);
       add(new THREE.BoxGeometry(0.3, 0.18, 0.1), flat("#9a9a9a"), 0.5, 0.9, 0.25);
     }
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.62, 0.76, 28),
+      new THREE.MeshBasicMaterial({ color: "#7cd16b", transparent: true, opacity: 0.95, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.2;
+    ring.visible = false;
+    g.add(ring);
 
     g.scale.setScalar(st.scale);
     g.position.copy(at);
@@ -497,7 +947,22 @@ export class GameEngine {
     bar.group.position.y = 2.35;
     g.add(bar.group);
 
-    return { kind, group: g, hp: st.hp, max: st.hp, atk: 0, move: null, slot, hpBar: bar.group, hpFill: bar.fill, bob: Math.random() * 6 };
+    return {
+      id: this.nextId++,
+      kind,
+      group: g,
+      hp: st.hp,
+      max: st.hp,
+      atk: 0,
+      order: "follow",
+      path: [],
+      repath: 0,
+      slot,
+      hpBar: bar.group,
+      hpFill: bar.fill,
+      ring,
+      bob: Math.random() * 6,
+    };
   }
 
   /* ----------------------------------------------------------------- loop */
@@ -508,7 +973,7 @@ export class GameEngine {
     this.timer.update(now);
     const dt = Math.min(this.timer.getDelta(), 0.05);
     if (!this.paused) this.update(dt);
-    this.updateCamera(dt);
+    this.updateCamera(this.paused ? 0 : dt);
     this.billboardBars();
     this.renderer.render(this.scene, this.camera);
     this.updateFloaters(this.paused ? 0 : dt);
@@ -521,18 +986,16 @@ export class GameEngine {
   private update(dt: number) {
     const t = this.timer.getElapsed();
 
-    // Shrine runes spin and bob.
     for (const [id, m] of this.shrineMeshes) {
       m.rune.rotation.y += dt * (this.visited.has(id) ? 0.3 : 1.5);
       m.rune.position.y = 3.3 + Math.sin(t * 2 + m.rune.id) * 0.12;
     }
 
-    // Click marker fades out.
     const mm = this.marker.material as THREE.MeshBasicMaterial;
     mm.opacity = Math.max(0, mm.opacity - dt * 2);
     this.marker.scale.multiplyScalar(1 - dt * 0.8);
 
-    if (this.status === "won" || this.status === "lost") {
+    if (this.over()) {
       if (this.scroll) {
         this.scroll.rotation.y += dt * 1.2;
         this.scroll.position.y = 1.2 + Math.sin(t * 2) * 0.2;
@@ -544,119 +1007,101 @@ export class GameEngine {
     this.deployCd = Math.max(0, this.deployCd - dt);
     this.rallyCd = Math.max(0, this.rallyCd - dt);
 
-    this.updateHero(dt);
-    this.updateAllies(dt);
+    if (this.checkShrines()) return;
+    for (const u of this.party()) this.updateUnit(u, dt);
+    this.separate();
     this.updateBoss(dt);
     this.updateProjectiles(dt);
     this.updateFx(dt);
 
     this.hudTimer -= dt;
-    if (this.hudTimer <= 0) this.emitHud(true);
+    if (this.hudTimer <= 0) this.emitHud();
   }
 
-  // Health bars always face the camera, even while paused.
-  private billboardBars() {
-    for (const u of this.party()) {
-      u.hpFill.scale.x = Math.max(0.001, u.hp / u.max);
-      u.hpBar.quaternion.copy(this.camera.quaternion).premultiply(u.group.quaternion.clone().invert());
+  private checkShrines() {
+    const h = this.hero;
+    if (h.hp <= 0) return false;
+    for (const s of shrines) {
+      if (this.visited.has(s.id)) continue;
+      if (distXZ(h.group.position, { x: s.at[0], z: s.at[1] }) < 2.7) {
+        h.path = [];
+        if (h.order === "move" || h.order === "attackMove") h.order = "idle";
+        h.group.position.y = 0;
+        this.setPaused(true);
+        this.cb.onShrine(s);
+        return true;
+      }
     }
-    this.bossHpFill.scale.x = Math.max(0.001, this.bossHp / BOSS.hp);
-    this.bossHpBar.visible = this.bossAggro && !this.bossDead;
-    this.bossHpBar.quaternion.copy(this.camera.quaternion).premultiply(this.bossGroup.quaternion.clone().invert());
+    return false;
   }
 
-  private stepToward(u: Unit, goal: THREE.Vector3, speed: number, dt: number, stopAt = 0.15) {
+  /** Walks the unit along its path. Returns true once the path is finished. */
+  private followPath(u: Unit, speed: number, dt: number) {
+    while (u.path.length && distXZ(u.group.position, u.path[0]) < 0.12) u.path.shift();
+    if (!u.path.length) {
+      u.group.position.y = 0;
+      return true;
+    }
+    this.stepToward(u, u.path[0], speed, dt);
+    return false;
+  }
+
+  private stepToward(u: Unit, goal: THREE.Vector3, speed: number, dt: number) {
     const p = u.group.position;
     const dx = goal.x - p.x;
     const dz = goal.z - p.z;
     const d = Math.hypot(dx, dz);
-    if (d <= stopAt) return true;
-    const step = Math.min(d - stopAt, speed * dt);
+    if (d < 1e-4) return;
+    const step = Math.min(d, speed * dt);
     p.x += (dx / d) * step;
     p.z += (dz / d) * step;
     u.group.rotation.y = Math.atan2(dx, dz);
     u.bob += dt * 12;
     p.y = Math.abs(Math.sin(u.bob)) * 0.12;
-    return false;
   }
 
   private face(u: Unit, target: THREE.Vector3) {
     u.group.rotation.y = Math.atan2(target.x - u.group.position.x, target.z - u.group.position.z);
   }
 
-  private updateHero(dt: number) {
-    const h = this.hero;
-    if (h.move) {
-      if (this.stepToward(h, h.move, STATS.hero.speed, dt)) {
-        h.move = null;
-        h.group.position.y = 0;
-      }
-    }
+  private reach(u: Unit) {
+    return STATS[u.kind].range + BOSS.radius;
+  }
 
-    // Walking into an unvisited shrine opens its chapter.
-    for (const s of shrines) {
-      if (this.visited.has(s.id)) continue;
-      if (distXZ(h.group.position, v2(s.at[0], s.at[1])) < 2.6) {
-        h.move = null;
-        h.group.position.y = 0;
-        this.setPaused(true);
-        this.cb.onShrine(s);
+  private updateUnit(u: Unit, dt: number) {
+    const st = STATS[u.kind];
+    const bp = this.bossGroup.position;
+    const bossUp = this.bossAggro && !this.bossDead;
+    const dBoss = distXZ(u.group.position, bp);
+    u.repath -= dt;
+
+    // Recruits step out of an incoming slam unless you've given them a move or hold order.
+    if (u !== this.hero && this.telegraph && u.order !== "move" && u.order !== "hold") {
+      const c = this.telegraph.at;
+      if (distXZ(u.group.position, c) < BOSS.slamRadius + 0.8) {
+        const away = u.group.position.clone().sub(c).setY(0);
+        if (away.lengthSq() < 0.01) away.set(1, 0, 0);
+        const flee = this.nav.nearestOpen({ x: c.x + away.normalize().x * (BOSS.slamRadius + 2), z: c.z + away.z * (BOSS.slamRadius + 2) });
+        this.stepToward(u, v2(flee.x, flee.z), st.speed * 1.1, dt);
         return;
       }
     }
 
-    if (!h.move && this.bossAggro && !this.bossDead) this.meleeBoss(h, dt);
-  }
-
-  private meleeBoss(u: Unit, dt: number) {
-    const st = STATS[u.kind];
-    const d = distXZ(u.group.position, this.bossGroup.position);
-    if (d > st.range + BOSS.radius + 0.3) return false;
-    this.face(u, this.bossGroup.position);
-    u.atk -= dt;
-    if (u.atk <= 0) {
-      u.atk = st.cd;
-      this.hitBoss(st.dmg, false);
-    }
-    return true;
-  }
-
-  private updateAllies(dt: number) {
-    const fighting = this.bossAggro && !this.bossDead;
-    const hp = this.hero.group.position;
-
-    for (const u of this.allies) {
-      if (u.hp <= 0) continue;
-      const st = STATS[u.kind];
-
-      // Trained troops step out of an incoming slam on their own. The hero has to be moved by you.
-      if (this.telegraph) {
-        const c = this.telegraph.at;
-        const d = distXZ(u.group.position, c);
-        if (d < BOSS.slamRadius + 0.8) {
-          const away = u.group.position.clone().sub(c).setY(0);
-          if (away.lengthSq() < 0.01) away.set(1, 0, 0);
-          away.normalize().multiplyScalar(BOSS.slamRadius + 2).add(c);
-          this.stepToward(u, away, st.speed * 1.1, dt);
-          continue;
-        }
-      }
-
-      if (!fighting) {
-        const goal = hp.clone().add(u.slot);
-        if (distXZ(u.group.position, goal) > 0.8) this.stepToward(u, goal, st.speed * (distXZ(u.group.position, goal) > 6 ? 1.4 : 1), dt, 0.4);
-        else u.group.position.y = 0;
-        continue;
-      }
-
-      if (st.heal) {
-        const hurt = this.party()
-          .filter((a) => a.hp < a.max)
-          .sort((a, b) => a.hp / a.max - b.hp / b.max)[0];
-        if (!hurt) continue;
-        if (distXZ(u.group.position, hurt.group.position) > st.range) {
-          this.stepToward(u, hurt.group.position, st.speed, dt, st.range - 0.5);
-          continue;
+    // Healer: tends the most wounded ally unless walking somewhere on your order.
+    if (st.heal && u.order !== "move") {
+      const hurt = this.party()
+        .filter((a) => a.hp < a.max && distXZ(a.group.position, u.group.position) < 14)
+        .sort((a, b) => a.hp / a.max - b.hp / b.max)[0];
+      if (hurt) {
+        const d = distXZ(u.group.position, hurt.group.position);
+        if (d > st.range) {
+          if (u.order === "hold") return;
+          if (u.repath <= 0 || !u.path.length) {
+            this.setPath(u, hurt.group.position);
+            u.repath = 0.5;
+          }
+          this.followPath(u, st.speed, dt);
+          return;
         }
         u.atk -= dt;
         if (u.atk <= 0) {
@@ -666,15 +1111,29 @@ export class GameEngine {
           this.ring(hurt.group.position, "#7e9a63", 1.2, 0.4);
           if (amt > 0) this.float(hurt.group.position, `+${Math.round(amt)}`, "heal");
         }
-        continue;
+        return;
       }
+    }
 
-      const bp = this.bossGroup.position;
-      const reach = st.range + BOSS.radius;
-      if (distXZ(u.group.position, bp) > reach) {
-        this.stepToward(u, bp, st.speed, dt, reach - 0.3);
-        continue;
+    const canFight = !st.heal && !this.bossDead;
+    const engage =
+      canFight &&
+      (u.order === "attack" ||
+        (bossUp && (u.order === "idle" || u.order === "follow" || u.order === "attackMove") && dBoss <= ACQUIRE + this.reach(u)) ||
+        (bossUp && u.order === "hold" && dBoss <= this.reach(u)));
+
+    if (engage) {
+      if (dBoss > this.reach(u)) {
+        if (u.order === "hold") return;
+        if (u.repath <= 0 || !u.path.length) {
+          const toward = bp.clone().sub(u.group.position).setY(0).setLength(Math.max(0, dBoss - this.reach(u) + 0.4)).add(u.group.position);
+          this.setPath(u, toward);
+          u.repath = 0.4;
+        }
+        this.followPath(u, st.speed, dt);
+        return;
       }
+      u.path = [];
       u.group.position.y = 0;
       this.face(u, bp);
       u.atk -= dt;
@@ -682,9 +1141,70 @@ export class GameEngine {
         u.atk = st.cd;
         if (st.ranged) {
           const crit = !!st.crit && Math.random() < st.crit;
-          this.shoot(u.group.position, "boss", st.dmg * (crit ? 2 : 1), crit, st.trim);
+          this.shoot(u.group.position, st.dmg * (crit ? 2 : 1), crit, st.trim);
         } else {
           this.hitBoss(st.dmg, false);
+        }
+      }
+      return;
+    }
+
+    switch (u.order) {
+      case "move":
+      case "attackMove":
+        if (this.followPath(u, st.speed, dt)) u.order = "idle";
+        break;
+      case "follow": {
+        if (this.hero.hp <= 0) {
+          u.order = "idle";
+          break;
+        }
+        const goal = this.hero.group.position.clone().setY(0).add(u.slot);
+        const d = distXZ(u.group.position, goal);
+        if (d > 1.0) {
+          if (u.repath <= 0 || !u.path.length) {
+            this.setPath(u, goal);
+            u.repath = 0.6;
+          }
+          this.followPath(u, st.speed * (d > 6 ? 1.35 : 1), dt);
+        } else {
+          u.path = [];
+          u.group.position.y = 0;
+        }
+        break;
+      }
+      default:
+        u.group.position.y = 0;
+    }
+  }
+
+  /** Pushes overlapping units apart without shoving them into obstacles. */
+  private separate() {
+    const units = this.party();
+    const minD = UNIT_RADIUS * 2;
+    for (let i = 0; i < units.length; i++) {
+      for (let j = i + 1; j < units.length; j++) {
+        const a = units[i].group.position;
+        const b = units[j].group.position;
+        let dx = b.x - a.x;
+        let dz = b.z - a.z;
+        let d = Math.hypot(dx, dz);
+        if (d >= minD) continue;
+        if (d < 1e-3) {
+          dx = Math.random() - 0.5;
+          dz = Math.random() - 0.5;
+          d = Math.hypot(dx, dz);
+        }
+        const push = (minD - d) / 2;
+        const nx = (dx / d) * push;
+        const nz = (dz / d) * push;
+        if (!this.nav.isBlocked(a.x - nx, a.z - nz)) {
+          a.x -= nx;
+          a.z -= nz;
+        }
+        if (!this.nav.isBlocked(b.x + nx, b.z + nz)) {
+          b.x += nx;
+          b.z += nz;
         }
       }
     }
@@ -694,10 +1214,9 @@ export class GameEngine {
     if (this.bossDead) return;
     const home = v2(bossDef.arena[0], bossDef.arena[1]);
     const party = this.party();
-    const inArena = party.filter((u) => distXZ(u.group.position, home) < 13.5);
 
     if (!this.bossAggro) {
-      if (inArena.length) {
+      if (party.some((u) => distXZ(u.group.position, home) < 13.5)) {
         this.bossAggro = true;
         this.status = "fight";
         this.bossSlam = BOSS.slamEvery;
@@ -718,7 +1237,6 @@ export class GameEngine {
 
     const bp = this.bossGroup.position;
 
-    // Slam: telegraph, then hit everything inside the circle.
     if (this.telegraph) {
       this.telegraph.t += dt;
       const k = Math.min(1, this.telegraph.t / BOSS.slamWindup);
@@ -743,7 +1261,6 @@ export class GameEngine {
       return;
     }
 
-    // Target: the engineer taunts when close, otherwise the nearest unit.
     const tank = party.find((u) => u.kind === "engineer" && distXZ(u.group.position, bp) < 6);
     const target = tank ?? [...party].sort((a, b) => distXZ(a.group.position, bp) - distXZ(b.group.position, bp))[0];
     if (!target) return;
@@ -754,7 +1271,6 @@ export class GameEngine {
       const step = Math.min(d - reach, BOSS.speed * dt);
       const dir = target.group.position.clone().sub(bp).setY(0).normalize();
       bp.addScaledVector(dir, step);
-      // Leash to the arena.
       const off = bp.clone().sub(home).setY(0);
       if (off.length() > 11) bp.copy(home.clone().add(off.setLength(11)));
       return;
@@ -806,7 +1322,9 @@ export class GameEngine {
     if (u.hp <= 0) {
       u.hp = 0;
       this.scene.remove(u.group);
+      this.selected.delete(u);
       if (u === this.hero) this.finish("lost");
+      this.emitHud();
     }
   }
 
@@ -843,25 +1361,27 @@ export class GameEngine {
   }
 
   private finish(result: "won" | "lost") {
-    if (this.status === "won" || this.status === "lost") return;
+    if (this.over()) return;
     this.status = result;
-    this.emitHud(true);
+    this.pendingAttackMove = false;
+    this.canvas.style.cursor = "";
+    this.emitHud();
     this.cb.onEnd(result);
   }
 
-  private shoot(from: THREE.Vector3, target: "boss" | Unit, dmg: number, crit: boolean, color: string) {
+  private shoot(from: THREE.Vector3, dmg: number, crit: boolean, color: string) {
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(crit ? 0.22 : 0.15, 6, 4), new THREE.MeshBasicMaterial({ color }));
     mesh.position.copy(from).setY(1.3);
     this.scene.add(mesh);
-    this.projectiles.push({ mesh, target, dmg, crit, speed: 18 });
+    this.projectiles.push({ mesh, dmg, crit, speed: 18 });
   }
 
   private updateProjectiles(dt: number) {
     this.projectiles = this.projectiles.filter((p) => {
-      const goal = p.target === "boss" ? this.bossGroup.position.clone().setY(3) : p.target.group.position.clone().setY(1.2);
+      const goal = this.bossGroup.position.clone().setY(3);
       const d = p.mesh.position.distanceTo(goal);
       if (d < 0.4 || this.bossDead) {
-        if (!this.bossDead && p.target === "boss") this.hitBoss(p.dmg, p.crit);
+        if (!this.bossDead) this.hitBoss(p.dmg, p.crit);
         this.scene.remove(p.mesh);
         p.mesh.geometry.dispose();
         (p.mesh.material as THREE.Material).dispose();
@@ -929,8 +1449,71 @@ export class GameEngine {
     });
   }
 
+  private billboardBars() {
+    for (const u of this.party()) {
+      u.hpFill.scale.x = Math.max(0.001, u.hp / u.max);
+      u.hpBar.quaternion.copy(this.camera.quaternion).premultiply(u.group.quaternion.clone().invert());
+    }
+    this.bossHpFill.scale.x = Math.max(0.001, this.bossHp / BOSS.hp);
+    this.bossHpBar.visible = this.bossAggro && !this.bossDead;
+    this.bossHpBar.quaternion.copy(this.camera.quaternion).premultiply(this.bossGroup.quaternion.clone().invert());
+  }
+
+  /* --------------------------------------------------------------- camera */
+
+  private camAxes() {
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion).setY(0);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+    const upGround = up.clone().setY(0);
+    const k = upGround.length() || 1;
+    return { right: right.normalize(), upGround: upGround.normalize(), k };
+  }
+
+  /** Drag the ground by a pixel delta (pan, touch drag). */
+  private panPixels(dx: number, dy: number) {
+    const wpp = 1 / this.pixelsPerUnit();
+    const { right, upGround, k } = this.camAxes();
+    this.followCam = false;
+    this.camTarget.addScaledVector(right, -dx * wpp).addScaledVector(upGround, (dy * wpp) / k);
+    this.clampCam();
+  }
+
+  private clampCam() {
+    this.camTarget.x = THREE.MathUtils.clamp(this.camTarget.x, -MAP, MAP);
+    this.camTarget.z = THREE.MathUtils.clamp(this.camTarget.z, -MAP, MAP);
+  }
+
   private updateCamera(dt: number) {
-    if (this.hero.hp > 0) this.camTarget.lerp(this.hero.group.position.clone().setY(0), Math.min(1, dt * 4));
+    // Keyboard and screen-edge scrolling.
+    let sx = 0;
+    let sy = 0;
+    if (this.keysHeld.has("arrowleft")) sx -= 1;
+    if (this.keysHeld.has("arrowright")) sx += 1;
+    if (this.keysHeld.has("arrowup")) sy -= 1;
+    if (this.keysHeld.has("arrowdown")) sy += 1;
+    if (this.mouse.inside && !this.drag && !this.paused) {
+      const edge = 12;
+      if (this.mouse.x < edge) sx -= 1;
+      if (this.mouse.x > this.canvas.clientWidth - edge) sx += 1;
+      if (this.mouse.y < edge) sy -= 1;
+      if (this.mouse.y > this.canvas.clientHeight - edge) sy += 1;
+    }
+    if ((sx || sy) && dt > 0) {
+      const speed = this.view * 0.9 * this.pixelsPerUnit() * dt;
+      this.panPixels(-sx * speed, -sy * speed);
+    }
+
+    if (this.followCam) {
+      const sel = this.selectedAlive();
+      const focus = sel.includes(this.hero) || !sel.length ? [this.hero] : sel;
+      const alive = focus.filter((u) => u.hp > 0);
+      if (alive.length) {
+        const c = new THREE.Vector3();
+        alive.forEach((u) => c.add(u.group.position));
+        c.divideScalar(alive.length).setY(0);
+        this.camTarget.lerp(c, Math.min(1, (dt || 0.016) * 4));
+      }
+    }
     this.camera.position.copy(this.camTarget).add(new THREE.Vector3(18, 24, 18));
     this.camera.lookAt(this.camTarget);
   }
@@ -946,19 +1529,49 @@ export class GameEngine {
     this.camera.updateProjectionMatrix();
   }
 
-  private emitHud(force: boolean) {
-    if (!force) return;
+  private viewFootprint(): Point[] {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    return [
+      { x: 0, y: 0 },
+      { x: w, y: 0 },
+      { x: w, y: h },
+      { x: 0, y: h },
+    ].map((p) => {
+      const g = this.groundAt(p);
+      return g ? { x: g.x, z: g.z } : { x: 0, z: 0 };
+    });
+  }
+
+  /* ------------------------------------------------------------------ hud */
+
+  private info(u: Unit): UnitInfo {
+    return { id: u.id, kind: u.kind, hp: Math.max(0, Math.round(u.hp)), max: u.max, order: u.order, selected: this.selected.has(u) };
+  }
+
+  private emitHud() {
     this.hudTimer = 0.1;
+    const party = this.party();
     this.cb.onHud({
       heroHp: Math.max(0, Math.round(this.hero.hp)),
       heroMax: this.hero.max,
-      warband: this.allies.map((u) => ({ kind: u.kind, hp: Math.round(u.hp), max: u.max })),
+      warband: this.allies.map((u) => this.info(u)),
+      selection: party.filter((u) => this.selected.has(u)).map((u) => this.info(u)),
       bossHp: Math.round(this.bossHp),
       bossMax: BOSS.hp,
       bossAggro: this.bossAggro && !this.bossDead,
       deployCd: this.deployCd,
       rallyCd: this.rallyCd,
       status: this.status,
+      pendingAttackMove: this.pendingAttackMove,
+      followCamera: this.followCam,
+      groups: [...this.groups.entries()].filter(([, g]) => g.some((u) => u.hp > 0)).map(([n]) => n),
+      minimap: {
+        units: party.map((u) => ({ x: u.group.position.x, z: u.group.position.z, kind: u.kind, selected: this.selected.has(u) })),
+        boss: { x: this.bossGroup.position.x, z: this.bossGroup.position.z, alive: !this.bossDead },
+        shrines: shrines.map((s) => ({ x: s.at[0], z: s.at[1], visited: this.visited.has(s.id), color: s.rune })),
+        view: this.viewFootprint(),
+      },
     });
   }
 }

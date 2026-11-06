@@ -198,3 +198,10 @@ body {
 .floater-heal {
   color: #9cc27a;
 }
+
+.select-box {
+  position: absolute;
+  border: 1px solid #7cd16b;
+  background: rgba(124, 209, 107, 0.12);
+  pointer-events: none;
+}
