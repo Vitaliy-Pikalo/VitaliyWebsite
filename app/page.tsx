@@ -120,7 +120,16 @@ export default function Home() {
                     <p className="pt-0.5 text-xs leading-6 text-muted">{job.period}</p>
                     <div>
                       <h3 className="font-medium leading-snug text-bone">{job.role}</h3>
-                      <p className="text-sm text-muted">{job.org}</p>
+                      <p className="text-sm text-muted">
+                        {job.href ? (
+                          <a href={job.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:text-gold-bright">
+                            {job.org}
+                            <ExternalIcon />
+                          </a>
+                        ) : (
+                          job.org
+                        )}
+                      </p>
                       <p className="mt-2 text-sm leading-relaxed">{job.summary}</p>
                       <Tags items={job.tags} />
                     </div>

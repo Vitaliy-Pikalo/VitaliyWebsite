@@ -4,7 +4,7 @@ export const profile = {
   name: "Vitaliy Pikalo",
   role: "Computer engineering student at Penn State",
   tagline:
-    "I build ML systems, trading tools, and full-stack apps, and I test my own results before I trust them.",
+    "I build AI products, ML systems, and full-stack apps, and I test my own results before I trust them.",
   email: "vap5288@psu.edu",
   github: "https://github.com/Vitaliy-Pikalo",
   linkedin: "https://www.linkedin.com/in/vitaliypikalo/",
@@ -14,9 +14,9 @@ export const profile = {
 };
 
 export const about: string[] = [
-  "I'm a computer engineering student at Penn State University Park, graduating in May 2028. I like problems where the answer can be measured: an engine's Elo, a model's calibration, whether a payment flow survives real users.",
-  "My best work so far is an AlphaZero-style Chess960 engine trained through self-play, a prediction-market bot that logged hundreds of thousands of market snapshots, and a research pipeline built to reject strategies that only look good by chance. Both of the last two taught me to distrust a good-looking result until the statistics back it up.",
-  "Outside class I've led a four-person freelance team shipping production apps, co-managed a $1.6M student equity fund, and lectured 100+ students on AI tools. Right now I'm building Pikalo, a finance education platform for immigrants and young Americans.",
+  "I'm a computer engineering student at Penn State University Park, graduating in May 2028. I like problems where the answer can be measured: an engine's Elo, a model's calibration, whether an AI answer can be traced back to its source.",
+  "Right now I'm building Pikalo, a finance education platform for immigrants and first-time U.S. tax filers. Its AI tutor answers from 1,491 IRS passages, cites a source for every answer, and withholds answers it can't verify. 1,300+ people have joined the waitlist.",
+  "Before that I built custom GPTs for 110+ Penn State students and red-teamed them with 350+ adversarial prompts, led a four-person freelance team shipping production booking apps, and co-managed a $1.6M student equity fund. On the side I trained an AlphaZero-style Chess960 engine and ran a prediction-market data service that taught me to distrust a good-looking result until the statistics back it up.",
 ];
 
 export type Experience = {
@@ -25,24 +25,34 @@ export type Experience = {
   period: string;
   summary: string;
   tags: string[];
+  href?: string;
 };
 
 export const experience: Experience[] = [
   {
-    role: "AI Teaching Assistant and Guest Lecturer",
-    org: "Penn State Behrend",
-    period: "Dec 2025 – May 2026",
+    role: "Founder & Software Engineer",
+    org: "Pikalo",
+    href: "https://pikalo.org",
+    period: "May 2026 – Present",
     summary:
-      "Gave faculty-invited guest lectures to 100+ students on prompt engineering, AI workflows, and automation with Microsoft Copilot. Built instructional materials and ran 1:1 sessions that raised the quality of submitted assignments.",
-    tags: ["Prompt engineering", "Microsoft Copilot", "Teaching"],
+      "Finance education for immigrants and first-time U.S. tax filers. Shipped a live platform with finance lessons, an IRS-based tax-residency checker, and FICA-refund and Roth IRA calculators, and grew the waitlist to 1,300+ signups. Built Ask Pikalo, an AI tutor that uses RAG over 1,491 IRS passages, cites a source for every answer, and pulls every number from calculator tools over MCP; answers it can't verify are withheld. Every push is gated on 47 eval cases (100% pass), and it passed 11/11 live end-to-end tests, including prompt injection, at about $0.001 per answer.",
+    tags: ["Next.js", "TypeScript", "Supabase", "RAG", "MCP", "Amazon Bedrock", "AWS CDK"],
   },
   {
-    role: "Full-Stack Development Team Lead",
-    org: "Freelance client work",
+    role: "Applied AI Engineer",
+    org: "Penn State",
+    period: "Dec 2025 – May 2026",
+    summary:
+      "Built and deployed 2 custom GPTs used by 110+ students, restricted to cited sources under strict guardrails. Red-teamed each one with 350+ adversarial prompts from LLM agents built to force uncited, wrong, or inappropriate answers, and iterated the system prompts until the attacks failed before release. Cut student research tasks from about two weeks to minutes while keeping a citation on every answer.",
+    tags: ["OpenAI custom GPTs", "Prompt engineering", "LLM red-teaming"],
+  },
+  {
+    role: "Full-Stack Software Engineer & Team Lead",
+    org: "Independent contractor",
     period: "Apr – Aug 2025",
     summary:
-      "Led a team of four engineers that shipped 10+ web and mobile booking apps for local businesses, handling 100+ customer reservations a month. Built encrypted Stripe payment flows with Supabase auth, PCI-compliant across every client, and ran branching and PR review on GitHub across concurrent projects.",
-    tags: ["Stripe", "Supabase", "Full-stack", "Team lead"],
+      "Led a team of four engineers that shipped 10+ production booking apps for local businesses, handling 100+ reservations a month, and ran code review and releases. Built Stripe payments with Supabase Auth and role-based access control, keeping checkout PCI-compliant.",
+    tags: ["React", "Node.js", "Supabase", "Stripe", "REST APIs"],
   },
   {
     role: "Equity Analyst",
@@ -53,12 +63,12 @@ export const experience: Experience[] = [
     tags: ["Equity valuation", "Economic research", "CFA standards"],
   },
   {
-    role: "Project Ignite Intern",
+    role: "Project Ignite Engineering Lead",
     org: "Carnegie Mellon University",
     period: "Jan 2022 – Dec 2024",
     summary:
-      "Proposed and led a team of 12 students building a search-and-rescue medical drone prototype on an $800 budget, motivated by the war in Ukraine. Integrated TensorFlow and OpenCV computer vision to detect people and deliver first-aid payloads from a PX4 drone.",
-    tags: ["TensorFlow", "OpenCV", "PX4", "Drones"],
+      "Led a 12-student team that shipped a search-and-rescue drone on an $800 budget, donated to a Ukrainian rescue foundation. Built a TensorFlow and OpenCV person-detection model on the drone's thermal camera to find people in rubble and stream their coordinates to the flight system for targeted medical-package drops. The system adjusted drops for wind and altitude, alerted authorities by injury severity, and texted live location updates.",
+    tags: ["TensorFlow", "OpenCV", "Python", "PX4", "Thermal imaging"],
   },
   {
     role: "Founding Member",
@@ -74,7 +84,7 @@ export const education = {
   degree: "B.S. Computer Engineering",
   school: "Penn State University Park",
   period: "2024 – 2028",
-  note: "Graduating May 2028. Dean's List, Spring 2026. Transferred from Penn State Behrend.",
+  note: "Graduating May 2028. Dean's List. Coursework includes data structures and algorithms, object-oriented programming, systems programming, and computer organization. Transferred from Penn State Behrend.",
 };
 
 export type Project = {
@@ -87,63 +97,48 @@ export type Project = {
 
 export const projects: Project[] = [
   {
-    name: "Chess960-NN",
+    name: "Levee",
+    summary: "Flood-risk rental analyzer. 3rd place, Best Use of AWS, at c0mpiled-15 (Oct 2026).",
+    detail:
+      "Built over a weekend with Alex Hasenbein. I built the usage-metered API backend with per-user entitlement checks and HMAC-signed API keys, and an Amazon Bedrock feature that writes a deal memo and checks every generated figure against the source data, falling back to a fixed template when a number doesn't match.",
+    tags: ["AWS Lambda", "Amazon Bedrock", "Node.js", "Hono", "Stripe"],
+    links: [
+      { label: "Live", href: "https://levee.rentals" },
+      { label: "Source", href: "https://github.com/AHasenbein/Levee" },
+    ],
+  },
+  {
+    name: "Chess960-NN: AlphaZero reproduction",
     summary: "AlphaZero-style engine for Fischer random chess, trained by self-play.",
     detail:
-      "A 10-block residual network (6.7M parameters) guides Monte Carlo tree search with PUCT. Trained from scratch through self-play and benchmarked at about 1600 Elo over 100 games against Stockfish. Served behind a FastAPI backend on Hugging Face Spaces.",
-    tags: ["PyTorch", "MCTS", "Reinforcement learning", "FastAPI"],
+      "A 10-block residual network (6.7M parameters) guides Monte Carlo tree search with PUCT. Supervised pretraining on 6.4M positions, then self-play reinforcement learning on one GPU, benchmarked at about 1600 Elo over 100 games against Stockfish. Served behind a FastAPI backend on Hugging Face Spaces.",
+    tags: ["PyTorch", "CUDA", "MCTS", "Reinforcement learning", "FastAPI"],
     links: [
       { label: "Play it", href: "https://chess960-nn.netlify.app" },
       { label: "Source", href: "https://github.com/Vitaliy-Pikalo/chess960-nn" },
     ],
-  },
-  {
-    name: "Pikalo",
-    summary: "Financial education for immigrants and first-time U.S. filers, with every answer tied to an IRS source.",
+  },  {
+    name: "Kalshi prediction-market data service",
+    summary: "A 24/7 Linux daemon that records prediction markets and checks its own odds.",
     detail:
-      "A live tax-residency checker built on the IRS substantial presence test, plus FICA-refund and Roth IRA calculators. Its AI tutor, in waitlist beta, retrieves from 1,491 IRS passages and takes every number from calculator tools over MCP instead of the model; answers it can't verify go to a human review queue. An eval suite runs in CI.",
-    tags: ["Next.js", "TypeScript", "Supabase", "RAG", "MCP", "AWS CDK", "Amazon Bedrock"],
-    links: [
-      { label: "Live", href: "https://pikalo.org" },
-      { label: "Source", href: "https://github.com/Vitaliy-Pikalo/pikalo.ai" },
-    ],
-  },
-  {
+      "A fault-tolerant 24/7 daemon against Kalshi's live API that prices contracts with a log-normal volatility model and sizes positions with fractional Kelly (k = 0.25). It has logged 270K+ snapshots and 13K+ predictions to SQLite and survives restarts with the database as the source of truth. I fixed concurrent-write failures with WAL journaling and traced an 18x data-inflation bug to a bad SQL join. When an early profit turned out to be sampling variance, I added calibration analysis so the bot reports how reliable its probabilities are.",
+    tags: ["Python", "SQLite", "pandas", "scikit-learn", "REST APIs"],
+    links: [{ label: "Source", href: "https://github.com/Vitaliy-Pikalo/kalshi-trading-bot" }],
+  },  {
     name: "Quant research pipeline",
     summary: "A backtesting pipeline built to catch false discoveries, run against real public data.",
     detail:
       "Purged and combinatorial cross-validation, walk-forward splits, a point-in-time feature store, transaction costs, and overfitting statistics (deflated Sharpe ratio, probability of backtest overfitting, Benjamini-Hochberg FDR), with 49 tests. I tested FX carry, 13F copycat investing, and Fed Beige Book sentiment, counting all 78 trials across hypotheses. None survived, and the write-up reports the negative results.",
     tags: ["Python", "Statistics", "Backtesting", "pytest"],
     links: [{ label: "Source", href: "https://github.com/Vitaliy-Pikalo/quant-research-pipeline" }],
-  },
-  {
-    name: "Kalshi trading bot",
-    summary: "Paper-trading daemon for prediction markets, with calibration checks.",
-    detail:
-      "A fault-tolerant 24/7 daemon against Kalshi's live API that prices contracts with a log-normal volatility model and sizes positions with fractional Kelly (k = 0.25). It has logged 270K+ snapshots and 13K+ predictions to SQLite and survives restarts with the database as the source of truth. I fixed concurrent-write failures with WAL journaling and traced an 18x data-inflation bug to a bad SQL join. When an early profit turned out to be sampling variance, I added calibration analysis so the bot reports how reliable its probabilities are.",
-    tags: ["Python", "SQLite", "SQLAlchemy", "Quant modeling"],
-    links: [{ label: "Source", href: "https://github.com/Vitaliy-Pikalo/kalshi-trading-bot" }],
-  },
-  {
+  },  {
     name: "Peaklo",
     summary: "Internship finder that pulls postings straight from company hiring systems. In beta.",
     detail:
       "Ingests postings from Greenhouse and Lever, normalizes them into one schema with a CI-checked classifier, and runs on a Postgres job scheduler with health checks, replayable raw payloads, and a dead-man's-switch heartbeat. 267 tests at 91% coverage, strict mypy, reversible migrations.",
     tags: ["Python", "FastAPI", "PostgreSQL", "Docker", "GitHub Actions"],
     links: [{ label: "Source", href: "https://github.com/Vitaliy-Pikalo/peaklo" }],
-  },
-  {
-    name: "Levee",
-    summary: "Hackathon project, 3rd place on the AWS track.",
-    detail:
-      "Built over a weekend with Alex Hasenbein. I owned the AWS integration, built on Amazon Bedrock.",
-    tags: ["AWS", "Amazon Bedrock", "Hackathon"],
-    links: [
-      { label: "Live", href: "https://levee.rentals" },
-      { label: "Source", href: "https://github.com/AHasenbein/Levee" },
-    ],
-  },
-];
+  },];
 
 export const openSource = [
   {
@@ -173,7 +168,7 @@ export const beyond: { title: string; detail: string }[] = [
   {
     title: "Varsity tennis",
     detail:
-      "NCAA Division III at Penn State Behrend. Went 17-0 in singles, won the AMCC conference title, and was named AMCC Player of the Week.",
+      "NCAA Division III at Penn State Behrend. Went 17-0 in singles, won the AMCC conference title, and made the AMCC All-Tournament Team and Player of the Week.",
   },
   {
     title: "Languages",
