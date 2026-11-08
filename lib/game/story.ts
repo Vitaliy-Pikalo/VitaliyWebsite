@@ -85,7 +85,7 @@ export const shrines: Shrine[] = [
     lines: [
       "I study computer engineering at Penn State. I started at Behrend in Erie and transferred to University Park, graduating in May 2028.",
       "Circuits, digital systems, data structures, quantum waves. The coursework is the foundation everything else stands on.",
-      "Before college, at Carnegie Mellon's Project Ignite, I led 12 students building a search-and-rescue medical drone that spots people with computer vision and drops first-aid kits.",
+      "Before college, at Carnegie Mellon's Project Ignite, I led 12 students building a search-and-rescue drone that finds people in rubble with a thermal camera and drops medical kits. We donated it to a Ukrainian rescue foundation.",
     ],
     recruit: "engineer",
     recruitName: "Engineer",
@@ -98,7 +98,7 @@ export const shrines: Shrine[] = [
     title: "The Chess Forge",
     lines: [
       "My flagship project is Chess960-NN: an AlphaZero-style engine for Fischer random chess.",
-      "A 6.7-million-parameter residual network guides Monte Carlo tree search, trained only by playing itself. It reached about 1600 Elo.",
+      "A 6.7-million-parameter residual network guides Monte Carlo tree search. It was pretrained on 6.4 million positions, then trained by playing itself, and reached about 1600 Elo.",
     ],
     recruit: "strategist",
     recruitName: "Strategist",
@@ -125,8 +125,8 @@ export const shrines: Shrine[] = [
     title: "The Treasury",
     lines: [
       "As an equity analyst at the Intrieri Family Student Managed Fund, I helped manage a live $1.6M portfolio under CFA standards.",
-      "I also led a four-person freelance team that shipped 10+ booking apps for local businesses, and I lectured 100+ students on AI tools as a TA.",
-      "Now I'm building Pikalo, which explains U.S. taxes and investing to immigrants and first-time filers, with every answer tied to an IRS source.",
+      "I also led a four-person freelance team that shipped 10+ booking apps for local businesses, and at Penn State I built custom GPTs for 110+ students, red-teamed with 350+ adversarial prompts.",
+      "Now I'm building Pikalo, which explains U.S. taxes and investing to immigrants and first-time filers, with every answer tied to an IRS source. 1,300+ people are on the waitlist.",
     ],
     recruit: "banner",
     recruitName: "Banner Bearer",
