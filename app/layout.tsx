@@ -5,7 +5,7 @@ import "@fontsource/cinzel/700.css";
 import "./globals.css";
 
 const description =
-  "Computer engineering student at Penn State building ML systems, trading tools, and full-stack apps.";
+  "Computer engineering student at Penn State building AI products, ML systems, and full-stack apps.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.vitaliypikalo.com"),
