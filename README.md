@@ -27,7 +27,8 @@ Personal site of Vitaliy Pikalo, plus a short strategy game that tells the same 
 | Ctrl+1–9, then 1–9 | Save and recall control groups (double-tap to center) |
 | Ctrl+A or \` | Select the whole warband |
 | F1 / Space | Select the hero / center the camera |
-| Arrows, screen edge, middle-drag, touch drag | Move the camera |
+| Arrows, screen edge, middle-drag, two-finger trackpad swipe, touch drag | Move the camera |
+| Wheel, pinch, + / - | Zoom |
 | Minimap | Click to look, right-click to send units |
 
 ### The Final Round
@@ -43,7 +44,7 @@ Vitaliy auto-attacks; the player only presses abilities. Each comes from a proje
 
 | Key | Ability | From | Effect | Unlocks at |
 |---|---|---|---|---|
-| Q | Medical Drone | CMU Project Ignite | Revives the last fallen recruit at half health, heals everyone 30% (20 s) | The Academy |
+| Q | Medical Drone | CMU Project Ignite | Revives the last fallen recruit at 30% health, heals everyone 15% (28 s) | The Academy |
 | W | Checkmate | Chess960-NN | 170 damage to the nearest enemy; stuns the giant 1.6 s and cancels a slam (10 s) | The Chess Forge |
 | E | Kelly Bet | Kalshi bot | Warband deals 1.5x damage for 6 s (20 s) | The Market Watch |
 
@@ -78,7 +79,7 @@ components/
   Spotlight.tsx     pointer light effect
   icons.tsx         inline SVG icons
   game/Campaign.tsx game HUD, dialogue, and engine lifecycle
-  game/Minimap.tsx  rotated minimap
+  game/Minimap.tsx  top-down minimap
 lib/
   content.ts        site copy
   game/engine.ts    three.js world, units, orders, combat, camera
