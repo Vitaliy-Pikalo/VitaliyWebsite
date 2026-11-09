@@ -56,7 +56,7 @@ export type EngineCallbacks = {
 
 const BOSS = { dmg: 44, cd: 1.6, radius: 1.7, speed: 3.4, slamEvery: 6.5, slamWindup: 1.7, slamRadius: 5.5, slamDmg: 130 };
 const ABILITY = {
-  drone: { cd: 20, heal: 0.3, revive: 0.5 },
+  drone: { cd: 28, heal: 0.15, revive: 0.3 },
   checkmate: { cd: 10, dmg: 170, stun: 1.6, range: 14 },
   kelly: { cd: 20, duration: 6, mult: 1.5 },
 };
