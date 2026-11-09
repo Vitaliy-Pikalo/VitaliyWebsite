@@ -56,7 +56,7 @@ export type EngineCallbacks = {
 
 const BOSS = { dmg: 44, cd: 1.6, radius: 1.7, speed: 3.4, slamEvery: 6.5, slamWindup: 1.7, slamRadius: 5.5, slamDmg: 130 };
 const ABILITY = {
-  drone: { cd: 20, heal: 0.3, revive: 0.5 },
+  drone: { cd: 28, heal: 0.15, revive: 0.3 },
   checkmate: { cd: 10, dmg: 170, stun: 1.6, range: 14 },
   kelly: { cd: 20, duration: 6, mult: 1.5 },
 };
@@ -71,6 +71,9 @@ const DIFF = {
   veteran: { bossHp: 3200, incoming: 1.2, boulderEvery: 9, boulderDmg: 230, shardHp: 170, shardDmg: 24, waves: [5, 4] },
 };
 const MAP = 40;
+// Camera faces north (the boss is at the top of the screen), tilted 55° down like Warcraft III.
+// `view` is how many world units fit in the visible area between the HUD bars; wheel/keys zoom it.
+const CAM = { pitch: THREE.MathUtils.degToRad(55), dist: 36, view: 22, min: 14, max: 36 };
 const ACQUIRE = 9; // idle units engage the boss inside this distance
 const UNIT_RADIUS = 0.45;
 
@@ -136,7 +139,8 @@ export class GameEngine {
   private camera: THREE.OrthographicCamera;
   private timer = new THREE.Timer();
   private raf = 0;
-  private view = 26;
+  private view = CAM.view;
+  private insets = { top: 0, bottom: 0 }; // px covered by the HUD bars
   private camTarget = new THREE.Vector3();
   private followCam = true;
   private keysHeld = new Set<string>();
@@ -194,6 +198,11 @@ export class GameEngine {
   private resizeObs: ResizeObserver;
   private disposed = false;
   private lowPower = false;
+  private sun!: THREE.DirectionalLight;
+  private shadowExtent = 0;
+  // Adaptive resolution: if frames run slow, step the pixel ratio down (never back up).
+  // `acc` is the start time (ms) of the current measuring window.
+  private perf = { acc: 0, frames: 0, ratio: 1 };
   private audio: GameAudio | null = null;
   private lastBark = 0;
 
@@ -205,7 +214,8 @@ export class GameEngine {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     // Phones and tablets get a lighter render: lower pixel ratio and shadow resolution.
     this.lowPower = window.matchMedia("(pointer: coarse)").matches;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.lowPower ? 1.5 : 2));
+    this.perf.ratio = Math.min(window.devicePixelRatio, this.lowPower ? 1.5 : 2);
+    this.renderer.setPixelRatio(this.perf.ratio);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -244,7 +254,7 @@ export class GameEngine {
     canvas.addEventListener("pointerdown", this.onPointerDown);
     window.addEventListener("pointermove", this.onPointerMove);
     window.addEventListener("pointerup", this.onPointerUp);
-    canvas.addEventListener("pointerleave", this.onPointerLeave);
+    document.documentElement.addEventListener("mouseleave", this.onPointerLeave);
     canvas.addEventListener("contextmenu", this.onContext);
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
     window.addEventListener("keydown", this.onKeyDown);
@@ -469,7 +479,7 @@ export class GameEngine {
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);
     window.removeEventListener("pointermove", this.onPointerMove);
     window.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
+    document.documentElement.removeEventListener("mouseleave", this.onPointerLeave);
     this.canvas.removeEventListener("contextmenu", this.onContext);
     this.canvas.removeEventListener("wheel", this.onWheel);
     window.removeEventListener("keydown", this.onKeyDown);
@@ -567,9 +577,28 @@ export class GameEngine {
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    this.view = THREE.MathUtils.clamp(this.view + Math.sign(e.deltaY) * 2, 16, 40);
-    this.resize();
+    if (this.paused) return;
+    // Trackpads: two-finger scroll pans, pinch (sent as ctrl+wheel) zooms. Mouse wheels zoom in steps.
+    const trackpad = !e.ctrlKey && e.deltaMode === 0 && (e.deltaX !== 0 || Math.abs(e.deltaY) < 40 || !Number.isInteger(e.deltaY));
+    if (trackpad) {
+      this.panPixels(-e.deltaX, -e.deltaY);
+    } else if (e.ctrlKey) {
+      this.zoomBy(Math.exp(e.deltaY * 0.01));
+    } else {
+      this.zoomBy(e.deltaY > 0 ? 1.12 : 1 / 1.12);
+    }
   };
+
+  private zoomBy(f: number) {
+    this.view = THREE.MathUtils.clamp(this.view * f, CAM.min, CAM.max);
+    this.resize();
+  }
+
+  /** Pixels covered by the HUD at the top and bottom, so the camera centers on the open area. */
+  setInsets(top: number, bottom: number) {
+    this.insets = { top: Math.max(0, top), bottom: Math.max(0, bottom) };
+    this.resize();
+  }
 
   private local(e: { clientX: number; clientY: number }) {
     const r = this.canvas.getBoundingClientRect();
@@ -596,7 +625,7 @@ export class GameEngine {
   private onPointerMove = (e: PointerEvent) => {
     const p = this.local(e);
     if (e.pointerType === "mouse") {
-      this.mouse = { x: p.x, y: p.y, inside: p.x >= 0 && p.y >= 0 && p.x <= this.canvas.clientWidth && p.y <= this.canvas.clientHeight };
+      this.mouse = { x: e.clientX, y: e.clientY, inside: true };
     }
     const d = this.drag;
     if (!d) return;
@@ -698,6 +727,14 @@ export class GameEngine {
         break;
       case "escape":
         this.command("cancel");
+        break;
+      case "=":
+      case "+":
+        this.zoomBy(1 / 1.15);
+        break;
+      case "-":
+      case "_":
+        this.zoomBy(1.15);
         break;
       case "`":
         this.selectAll();
@@ -895,11 +932,13 @@ export class GameEngine {
     const sun = new THREE.DirectionalLight("#ffe7c2", 2.1);
     sun.position.set(28, 42, 12);
     sun.castShadow = true;
-    sun.shadow.mapSize.setScalar(this.lowPower ? 1024 : 2048);
+    this.sun = sun;
+    this.scene.add(sun.target);
+    sun.shadow.mapSize.setScalar(this.lowPower ? 1024 : 1536); // covers only the view, so this stays sharp
     sun.shadow.bias = -0.0006;
     sun.shadow.normalBias = 0.03;
-    const s = 50;
-    Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 120 });
+    // The shadow box follows the camera (see fitShadows), so only nearby objects render into it.
+    Object.assign(sun.shadow.camera, { near: 1, far: 120 });
     this.scene.add(sun);
     // Cool fill from the opposite side keeps shadowed faces readable.
     const fill = new THREE.DirectionalLight("#9fb6d6", 0.45);
@@ -1274,7 +1313,47 @@ export class GameEngine {
     this.billboardBars();
     this.renderer.render(this.scene, this.camera);
     this.updateFloaters(this.paused ? 0 : dt);
+    this.adaptQuality();
   };
+
+  /** Lower the pixel ratio in steps while the average frame takes longer than ~25 ms (40 fps). */
+  private adaptQuality() {
+    const p = this.perf;
+    const now = performance.now();
+    if (this.paused || document.hidden || !p.acc) {
+      p.acc = now; // restart the window (acc holds the window start time)
+      p.frames = 0;
+      return;
+    }
+    p.frames++;
+    if (now - p.acc < 1500) return;
+    const avg = (now - p.acc) / 1000 / p.frames;
+    p.acc = now;
+    p.frames = 0;
+    if (avg > 0.025 && p.ratio > 1) {
+      p.ratio = Math.max(1, p.ratio - 0.25);
+      this.renderer.setPixelRatio(p.ratio);
+      this.resize();
+    }
+  }
+
+  /** Fit the sun's shadow box around what the camera can see, snapped to whole shadow texels. */
+  private fitShadows() {
+    const w = this.camera.right - this.camera.left;
+    const h = (this.camera.top - this.camera.bottom) / Math.sin(CAM.pitch);
+    const ext = Math.ceil(Math.hypot(w, h) / 2 + 3);
+    const cam = this.sun.shadow.camera;
+    if (ext !== this.shadowExtent) {
+      this.shadowExtent = ext;
+      Object.assign(cam, { left: -ext, right: ext, top: ext, bottom: -ext });
+      cam.updateProjectionMatrix();
+    }
+    const texel = (2 * ext) / this.sun.shadow.mapSize.x;
+    const cx = Math.round(this.camTarget.x / texel) * texel;
+    const cz = Math.round(this.camTarget.z / texel) * texel;
+    this.sun.target.position.set(cx, 0, cz);
+    this.sun.position.set(cx + 28, 42, cz + 12);
+  }
 
   private party() {
     return [this.hero, ...this.allies].filter((u) => u.hp > 0);
@@ -2145,11 +2224,12 @@ export class GameEngine {
     if (this.keysHeld.has("arrowup")) sy -= 1;
     if (this.keysHeld.has("arrowdown")) sy += 1;
     if (this.mouse.inside && !this.drag && !this.paused) {
-      const edge = 12;
+      // Screen-edge scrolling uses the window edges, so it also works over the HUD bars.
+      const edge = 6;
       if (this.mouse.x < edge) sx -= 1;
-      if (this.mouse.x > this.canvas.clientWidth - edge) sx += 1;
+      if (this.mouse.x > window.innerWidth - edge) sx += 1;
       if (this.mouse.y < edge) sy -= 1;
-      if (this.mouse.y > this.canvas.clientHeight - edge) sy += 1;
+      if (this.mouse.y > window.innerHeight - edge) sy += 1;
     }
     if ((sx || sy) && dt > 0) {
       const speed = this.view * 0.9 * this.pixelsPerUnit() * dt;
@@ -2167,8 +2247,13 @@ export class GameEngine {
         this.camTarget.lerp(c, Math.min(1, (dt || 0.016) * 4));
       }
     }
-    this.camera.position.copy(this.camTarget).add(new THREE.Vector3(18, 24, 18));
-    this.camera.lookAt(this.camTarget);
+    this.camera.position.set(
+      this.camTarget.x,
+      Math.sin(CAM.pitch) * CAM.dist,
+      this.camTarget.z + Math.cos(CAM.pitch) * CAM.dist,
+    );
+    this.camera.lookAt(this.camTarget.x, 0, this.camTarget.z);
+    this.fitShadows();
   }
 
   private resize() {
@@ -2177,8 +2262,20 @@ export class GameEngine {
     const h = el.clientHeight || 1;
     this.renderer.setSize(w, h, false);
     const aspect = w / h;
-    const v = aspect < 1 ? this.view * 0.75 : this.view;
-    Object.assign(this.camera, { left: (-v * aspect) / 2, right: (v * aspect) / 2, top: v / 2, bottom: -v / 2 });
+    // `view` covers the open area between the HUD bars; put the camera target at its center.
+    const top = Math.min(this.insets.top, h * 0.4);
+    const bottom = Math.min(this.insets.bottom, h * 0.5);
+    const free = Math.max(1, h - top - bottom);
+    // Landscape: `view` is the open height. Portrait phones: `view` sets the width instead,
+    // otherwise only a narrow strip of the map fits across.
+    const v = aspect < 1 ? (this.view * 0.85) / aspect : (this.view * h) / free;
+    const centerFromTop = (top + free / 2) / h;
+    Object.assign(this.camera, {
+      left: (-v * aspect) / 2,
+      right: (v * aspect) / 2,
+      top: v * centerFromTop,
+      bottom: v * (centerFromTop - 1),
+    });
     this.camera.updateProjectionMatrix();
   }
 

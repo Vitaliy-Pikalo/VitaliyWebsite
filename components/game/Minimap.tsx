@@ -3,11 +3,9 @@
 import { useEffect, useRef } from "react";
 import type { MapInfo, MinimapState } from "@/lib/game/engine";
 
-// The minimap is rotated 45° so its "up" matches the isometric camera.
-// World (x, z) -> minimap (u, v): u = (x - z) / sqrt2, v = (x + z) / sqrt2.
-const S = Math.SQRT2;
-const toMini = (x: number, z: number) => ({ u: (x - z) / S, v: (x + z) / S });
-const toWorld = (u: number, v: number) => ({ x: (u + v) / S, z: (v - u) / S });
+// The camera faces north, so the minimap is a plain top-down square: up is -z (toward the boss).
+const toMini = (x: number, z: number) => ({ u: x, v: z });
+const toWorld = (u: number, v: number) => ({ x: u, z: v });
 
 type Props = {
   map: MapInfo;
@@ -19,7 +17,7 @@ type Props = {
 
 export default function Minimap({ map, state, onFocus, onOrder, size = 148 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const extent = map.half * S; // half-diagonal of the rotated square
+  const extent = map.half;
   const scale = size / (2 * extent);
   const px = (x: number, z: number) => {
     const { u, v } = toMini(x, z);
@@ -39,7 +37,7 @@ export default function Minimap({ map, state, onFocus, onOrder, size = 148 }: Pr
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, size, size);
 
-    // Ground diamond.
+    // Ground.
     const corners = [
       px(-map.half, -map.half),
       px(map.half, -map.half),

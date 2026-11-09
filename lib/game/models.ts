@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { UnitKind } from "./story";
 import { STATS } from "./units";
 
@@ -25,6 +26,70 @@ function trimShadows(root: THREE.Object3D, minSize: number) {
     box.copy(o.geometry.boundingBox!).getSize(size);
     o.castShadow = Math.max(size.x, size.y, size.z) >= minSize;
   });
+}
+
+/** Shared vertex-colored materials, keyed by the non-color properties of the parts they replace. */
+const bakedMats = new Map<string, THREE.MeshLambertMaterial>();
+
+/**
+ * Merge the static parts under each joint into as few meshes as possible, so a unit draws in
+ * a handful of calls instead of ~27. Joints (groups) stay separate, so animation is unchanged.
+ * With `bakeColors`, plain parts of any color merge into one vertex-colored mesh per joint;
+ * otherwise parts merge only when they share a material object (the giant recolors its
+ * `stone` material at runtime, so its materials must survive).
+ */
+function mergeParts(root: THREE.Object3D, bakeColors: boolean) {
+  const nodes: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) nodes.push(o);
+  });
+  const color = new THREE.Color();
+  for (const node of nodes) {
+    const buckets = new Map<string, { mat: THREE.Material; parts: THREE.Mesh[]; bake: boolean }>();
+    for (const c of node.children) {
+      if (!(c instanceof THREE.Mesh) || c.children.length || Array.isArray(c.material)) continue;
+      const m = c.material as THREE.MeshLambertMaterial;
+      const plain = bakeColors && m.type === "MeshLambertMaterial" && !m.transparent && !m.map && m.emissive.getHex() === 0;
+      const key = plain ? "bake" : m.uuid;
+      const b = buckets.get(key) ?? { mat: m, parts: [], bake: plain };
+      b.parts.push(c);
+      buckets.set(key, b);
+    }
+    for (const { mat: m, parts, bake } of buckets.values()) {
+      if (parts.length < 2) continue;
+      const geos = parts.map((c) => {
+        c.updateMatrix();
+        const g = (c.geometry.index ? c.geometry.toNonIndexed() : c.geometry.clone()).applyMatrix4(c.matrix);
+        for (const k of Object.keys(g.attributes)) if (k !== "position" && k !== "normal") g.deleteAttribute(k);
+        if (bake) {
+          color.copy((c.material as THREE.MeshLambertMaterial).color);
+          const n = g.attributes.position.count;
+          const arr = new Float32Array(n * 3);
+          for (let i = 0; i < n; i++) color.toArray(arr, i * 3);
+          g.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+        }
+        return g;
+      });
+      const merged = mergeGeometries(geos);
+      geos.forEach((g) => g.dispose());
+      if (!merged) continue;
+      let material: THREE.Material = m;
+      if (bake) {
+        const flat = (m as THREE.MeshLambertMaterial).flatShading;
+        const k = `lambert|${flat}`;
+        if (!bakedMats.has(k)) bakedMats.set(k, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: flat }));
+        material = bakedMats.get(k)!;
+      }
+      const out = new THREE.Mesh(merged, material);
+      out.castShadow = parts.some((c) => c.castShadow);
+      out.receiveShadow = parts.some((c) => c.receiveShadow);
+      for (const c of parts) {
+        node.remove(c);
+        c.geometry.dispose();
+      }
+      node.add(out);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ units */
@@ -190,6 +255,7 @@ export function buildUnit(kind: UnitKind): UnitRig {
 
   root.scale.setScalar(st.scale);
   trimShadows(root, 0.45);
+  mergeParts(root, true);
   return { root, body: bodyG, legL, legR, torso, head, armL, armR, cape };
 }
 
@@ -346,6 +412,7 @@ export function buildGiant(): GiantRig {
 
   root.scale.setScalar(1.25);
   trimShadows(root, 0.5);
+  mergeParts(root, false);
   return { root, body, legL, legR, torso, head, armL, armR, glow: [glowA, glowEye], stone };
 }
 

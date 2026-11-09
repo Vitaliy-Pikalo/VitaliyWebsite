@@ -66,6 +66,8 @@ export default function Campaign() {
     difficultyRef.current = difficulty;
   }, [difficulty]);
   const audioRef = useRef<GameAudio | null>(null);
+  const topBarRef = useRef<HTMLDivElement>(null);
+  const bottomBarRef = useRef<HTMLDivElement>(null);
   const [sound, setSound] = useState<AudioSettings>({ sound: true, music: true, voices: false });
   const panelOpen = useRef(true);
   useEffect(() => {
@@ -91,6 +93,17 @@ export default function Campaign() {
       audioRef.current = null;
     };
   }, []);
+
+  // Tell the engine how much of the screen the HUD bars cover, so the camera centers on the open area.
+  const syncInsets = useCallback(() => {
+    engineRef.current?.setInsets(topBarRef.current?.offsetHeight ?? 0, bottomBarRef.current?.offsetHeight ?? 0);
+  }, []);
+  useEffect(() => {
+    const ro = new ResizeObserver(syncInsets);
+    if (topBarRef.current) ro.observe(topBarRef.current);
+    if (bottomBarRef.current) ro.observe(bottomBarRef.current);
+    return () => ro.disconnect();
+  }, [syncInsets]);
 
   useEffect(() => {
     let engine: GameEngine | null = null;
@@ -130,6 +143,7 @@ export default function Campaign() {
         audioRef.current?.music("explore");
         engineRef.current = engine;
         setMapInfo(engine.mapInfo);
+        syncInsets();
         if (new URLSearchParams(window.location.search).has("debug")) {
           (window as unknown as { __campaign?: GameEngine }).__campaign = engine;
         }
@@ -202,7 +216,7 @@ export default function Campaign() {
       <div ref={overlayRef} className="pointer-events-none absolute inset-0" aria-hidden />
 
       {/* Top bar */}
-      <div className="hud-bar absolute inset-x-0 top-0 flex items-center justify-between gap-2 border-b-2 px-3 py-2 sm:px-5">
+      <div ref={topBarRef} className="hud-bar absolute inset-x-0 top-0 flex items-center justify-between gap-2 border-b-2 px-3 py-2 sm:px-5">
         <div className="flex gap-2">
           <Link href="/" className="btn-stone">Back to site</Link>
           <button type="button" className="btn-stone" onClick={openControls}>Controls</button>
@@ -262,7 +276,7 @@ export default function Campaign() {
       )}
 
       {/* Bottom console */}
-      <div className="hud-bar absolute inset-x-0 bottom-0 flex items-stretch gap-3 border-t-2 px-2 pb-2 pt-2 sm:px-3">
+      <div ref={bottomBarRef} className="hud-bar absolute inset-x-0 bottom-0 flex items-stretch gap-3 border-t-2 px-2 pb-2 pt-2 sm:px-3">
         {mapInfo && hud && (
           <div className="hidden shrink-0 md:block">
             <Minimap map={mapInfo} state={hud.minimap} onFocus={(x, z) => e()?.focus(x, z)} onOrder={(x, z) => e()?.orderTo(x, z)} />
@@ -481,6 +495,8 @@ const CONTROLS: [string, string][] = [
   ["Ctrl+A or `", "Select the whole warband"],
   ["F1 / Space", "Select Vitaliy / center the camera"],
   ["Arrows, screen edge, middle-drag", "Move the camera"],
+  ["Two-finger swipe (trackpad)", "Move the camera"],
+  ["Wheel, pinch, or + / −", "Zoom in and out"],
   ["Minimap", "Click to look, right-click to send units"],
 ];
 

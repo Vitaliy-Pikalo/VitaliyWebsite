@@ -9,7 +9,7 @@ export const abilities: Record<AbilityId, { name: string; hotkey: string; source
     name: "Medical Drone",
     hotkey: "Q",
     source: "CMU Project Ignite",
-    blurb: "Revives the last fallen recruit at half health and heals the whole warband.",
+    blurb: "Revives the last fallen recruit at 30% health and heals the warband for 15%.",
     unlock: "academy",
   },
   checkmate: {
