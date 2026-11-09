@@ -2266,7 +2266,9 @@ export class GameEngine {
     const top = Math.min(this.insets.top, h * 0.4);
     const bottom = Math.min(this.insets.bottom, h * 0.5);
     const free = Math.max(1, h - top - bottom);
-    const v = ((aspect < 1 ? this.view * 0.8 : this.view) * h) / free;
+    // Landscape: `view` is the open height. Portrait phones: `view` sets the width instead,
+    // otherwise only a narrow strip of the map fits across.
+    const v = aspect < 1 ? (this.view * 0.85) / aspect : (this.view * h) / free;
     const centerFromTop = (top + free / 2) / h;
     Object.assign(this.camera, {
       left: (-v * aspect) / 2,
