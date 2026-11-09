@@ -132,7 +132,19 @@ export function glowSprite(color: string, scale: number, opacity = 0.9) {
   return sprite;
 }
 
-export type Brazier = { flame: THREE.Mesh; glow: THREE.Sprite; light: THREE.PointLight; seed: number };
+/** A warm pool of light painted on the ground. Stands in for a point light at a fraction of the cost. */
+function groundGlow(color: string, size: number, opacity: number) {
+  glowSprite(color, 1).material.dispose(); // make sure the shared texture exists
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(size, size),
+    new THREE.MeshBasicMaterial({ map: glowTexture, color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = 0.06;
+  return m;
+}
+
+export type Brazier = { flame: THREE.Mesh; glow: THREE.Sprite; pool: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>; seed: number };
 
 /** Stone fire bowl with a flickering flame and a warm point light. */
 export function buildBrazier(scene: THREE.Scene, x: number, z: number): Brazier {
@@ -158,12 +170,12 @@ export function buildBrazier(scene: THREE.Scene, x: number, z: number): Brazier 
   const glow = glowSprite("#ff9a3c", 2.6, 0.75);
   glow.position.y = 1.75;
   g.add(glow);
-  const light = new THREE.PointLight("#ff9a3c", 9, 10, 1.8);
-  light.position.y = 2.0;
-  g.add(light);
+  // No real light: a point light would add a cost to every lit pixel on screen.
+  const pool = groundGlow("#ff9a3c", 7, 0.32);
+  g.add(pool);
   g.position.set(x, 0, z);
   scene.add(g);
-  return { flame, glow, light, seed: Math.random() * 10 };
+  return { flame, glow, pool, seed: Math.random() * 10 };
 }
 
 export function animateBraziers(list: Brazier[], t: number) {
@@ -172,6 +184,6 @@ export function animateBraziers(list: Brazier[], t: number) {
     b.flame.scale.set(1 / f, f, 1 / f);
     b.flame.rotation.y = t * 2 + b.seed;
     b.glow.material.opacity = 0.6 + (f - 1) * 1.2;
-    b.light.intensity = 8 + (f - 1) * 18;
+    b.pool.material.opacity = 0.3 + (f - 1) * 0.5;
   }
 }
